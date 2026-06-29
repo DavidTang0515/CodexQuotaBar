@@ -1,6 +1,6 @@
 # CodexQuotaBar
 
-CodexQuotaBar is a small macOS menu bar app idea for showing local Codex quota at a glance.
+CodexQuotaBar is a small macOS menu bar app for showing local Codex quota at a glance.
 
 ## Goal
 
@@ -14,6 +14,16 @@ Show Codex 5-hour and 7-day quota directly in the macOS status bar with a compac
 The first version should be lightweight, local-first, and easy to inspect.
 
 See [REQUIREMENTS.md](REQUIREMENTS.md) for the current product requirements and safety boundaries.
+
+## Actual Preview
+
+Menu bar display:
+
+![CodexQuotaBar menu bar preview](docs/assets/status-bar-preview.png)
+
+Dropdown menu:
+
+![CodexQuotaBar dropdown menu preview](docs/assets/menu-preview.png)
 
 ## First Version Scope
 
