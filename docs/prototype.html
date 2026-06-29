@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CodexQuotaBar Prototype</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --ink: #1f2933;
+      --muted: #697586;
+      --panel: #ffffff;
+      --bar: #075f9d;
+      --bar-deep: #034f88;
+      --slot: rgba(110, 165, 203, 0.42);
+      --orange: #ffb447;
+      --green: #42c77a;
+      --red: #ff5b66;
+      --white: #f8fbff;
+      --line: #d9e1ea;
+      --shadow: 0 18px 45px rgba(31, 41, 51, 0.16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, #eef3f7 0%, #f8fafc 62%, #eef2f7 100%);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    .stage {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 42px 20px;
+    }
+
+    .prototype {
+      width: min(960px, 100%);
+      display: grid;
+      gap: 22px;
+    }
+
+    .window {
+      overflow: hidden;
+      border: 1px solid rgba(105, 117, 134, 0.22);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .titlebar {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 8px;
+      background: #f7f8fa;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .traffic {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .traffic.red {
+      background: #ff5f57;
+    }
+
+    .traffic.yellow {
+      background: #ffbd2e;
+    }
+
+    .traffic.green {
+      background: #28c840;
+    }
+
+    .title {
+      flex: 1;
+      text-align: center;
+      color: #4b5565;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .canvas {
+      min-height: 430px;
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(90deg, rgba(229, 235, 241, 0.95) 0 10%, transparent 10%),
+        linear-gradient(180deg, #ffffff 0%, #f8fbfd 100%);
+      padding: 44px 24px;
+    }
+
+    .menubar-strip {
+      width: min(620px, 100%);
+      height: 138px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, #0a67a7 0%, #035a97 100%);
+      box-shadow:
+        inset 0 1px rgba(255, 255, 255, 0.14),
+        0 14px 30px rgba(4, 74, 124, 0.28);
+    }
+
+    .quota-pill {
+      width: fit-content;
+      min-height: 92px;
+      display: grid;
+      grid-template-columns: 58px auto 82px;
+      align-items: center;
+      column-gap: 12px;
+      padding: 16px 18px;
+      border-radius: 7px;
+      background:
+        linear-gradient(90deg, rgba(0, 72, 122, 0.18), rgba(7, 95, 157, 0.1));
+      color: var(--white);
+    }
+
+    .labels,
+    .percents,
+    .signals {
+      display: grid;
+      grid-template-rows: repeat(2, 1fr);
+      row-gap: 10px;
+      align-items: center;
+    }
+
+    .labels {
+      font-size: 30px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .percents {
+      justify-items: end;
+      font-size: 30px;
+      font-weight: 800;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .signal-row {
+      display: grid;
+      grid-template-columns: repeat(5, 11px);
+      gap: 7px;
+      align-items: center;
+      width: max-content;
+    }
+
+    .signal-cell {
+      width: 11px;
+      height: 24px;
+      border-radius: 7px;
+      background: var(--slot);
+      box-shadow: inset 0 1px rgba(255, 255, 255, 0.12);
+    }
+
+    .signal-cell.on.orange {
+      background: linear-gradient(180deg, #ffc35b, var(--orange));
+      box-shadow: 0 0 8px rgba(255, 180, 71, 0.45);
+    }
+
+    .signal-cell.on.green {
+      background: linear-gradient(180deg, #63dfa0, var(--green));
+      box-shadow: 0 0 8px rgba(66, 199, 122, 0.42);
+    }
+
+    .signal-cell.on.red {
+      background: linear-gradient(180deg, #ff7a83, var(--red));
+      box-shadow: 0 0 8px rgba(255, 91, 102, 0.42);
+    }
+
+    .caption {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: start;
+      padding: 18px 2px 0;
+    }
+
+    .caption h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .caption p {
+      margin: 0;
+      max-width: 640px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .state-card {
+      min-width: 220px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .state-card h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .state {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+      line-height: 1.8;
+    }
+
+    .swatch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--orange);
+    }
+
+    .swatch.green::before {
+      background: var(--green);
+    }
+
+    .swatch.red::before {
+      background: var(--red);
+    }
+
+    @media (max-width: 640px) {
+      .canvas {
+        padding: 28px 12px;
+      }
+
+      .quota-pill {
+        width: fit-content;
+        grid-template-columns: 44px auto 70px;
+        column-gap: 9px;
+        padding: 14px 12px;
+      }
+
+      .labels,
+      .percents {
+        font-size: 22px;
+      }
+
+      .signal-row {
+        grid-template-columns: repeat(5, 9px);
+        gap: 6px;
+      }
+
+      .signal-cell {
+        width: 9px;
+        height: 22px;
+      }
+
+      .caption {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="prototype" aria-label="CodexQuotaBar prototype">
+      <div class="window">
+        <div class="titlebar">
+          <span class="traffic red"></span>
+          <span class="traffic yellow"></span>
+          <span class="traffic green"></span>
+          <div class="title">CodexQuotaBar 状态栏原型</div>
+        </div>
+        <div class="canvas">
+          <div class="menubar-strip">
+            <div class="quota-pill" role="img" aria-label="Codex quota: 5 hour 52 percent, 7 day 42 percent">
+              <div class="labels">
+                <div>5h</div>
+                <div>7d</div>
+              </div>
+              <div class="signals">
+                <div class="signal-row" aria-hidden="true">
+                  <span class="signal-cell on orange"></span>
+                  <span class="signal-cell on orange"></span>
+                  <span class="signal-cell on orange"></span>
+                  <span class="signal-cell"></span>
+                  <span class="signal-cell"></span>
+                </div>
+                <div class="signal-row" aria-hidden="true">
+                  <span class="signal-cell on orange"></span>
+                  <span class="signal-cell on orange"></span>
+                  <span class="signal-cell"></span>
+                  <span class="signal-cell"></span>
+                  <span class="signal-cell"></span>
+                </div>
+              </div>
+              <div class="percents">
+                <div>52%</div>
+                <div>42%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="caption">
+        <div>
+          <h1>第一版视觉方向</h1>
+          <p>状态栏只显示两行核心信息：5 小时额度和 7 天额度。每行保留 5 根等高小柱，每根约代表 20%；信号条紧贴百分比，右侧不放 Codex 图标。</p>
+        </div>
+        <aside class="state-card" aria-label="Color rules">
+          <h2>颜色规则</h2>
+          <div class="state"><span class="swatch green">绿色</span><span>&gt; 60%</span></div>
+          <div class="state"><span class="swatch">橙色</span><span>20% - 60%</span></div>
+          <div class="state"><span class="swatch red">红色</span><span>&lt; 20%</span></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
