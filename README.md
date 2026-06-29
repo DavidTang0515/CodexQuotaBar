@@ -33,6 +33,27 @@ See [REQUIREMENTS.md](REQUIREMENTS.md) for the current product requirements and 
   - Open Codex
   - Quit
 
+## Install From GitHub Releases
+
+Download the latest `CodexQuotaBar-*.dmg` from GitHub Releases.
+
+1. Open the DMG.
+2. Drag `CodexQuotaBar.app` into `Applications`.
+3. Open `CodexQuotaBar` from Applications.
+4. If macOS blocks the app, open System Settings > Privacy & Security and allow it.
+
+Requirements:
+
+- macOS 13 or newer.
+- Codex desktop app or Codex CLI installed and signed in.
+
+Uninstall:
+
+1. Quit CodexQuotaBar from the menu bar.
+2. Delete `/Applications/CodexQuotaBar.app`.
+
+The first release is ad-hoc signed and not notarized. It does not install a LaunchAgent, login item, daemon, or auto-updater.
+
 ## Safety Boundaries
 
 - Do not read browser cookies.
@@ -64,6 +85,18 @@ native/build/CodexQuotaBar.app
 ```
 
 This local build is not installed into `/Applications` and does not add a LaunchAgent, login item, daemon, or auto-updater.
+
+Package a release build:
+
+```bash
+./script/package_release.sh
+```
+
+Release artifacts are written to:
+
+```text
+release/
+```
 
 ## Proposed Tech Stack
 

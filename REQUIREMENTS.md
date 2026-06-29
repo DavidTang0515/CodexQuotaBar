@@ -43,10 +43,12 @@ How much Codex quota do I have left?
 ## Deployment
 
 - Keep deployment lightweight.
-- First version should avoid installers.
-- First version should avoid writing into `/Applications`.
+- First public test version should ship as a DMG.
+- The DMG should let users manually drag `CodexQuotaBar.app` into `/Applications`.
+- The app and scripts should not automatically write into `/Applications`.
 - First version should avoid LaunchAgent, login item, daemon, background service, or auto-updater.
 - Prefer a local build/run workflow before packaging.
+- GitHub Releases should include a DMG, a zip fallback, install notes, and SHA-256 checksums.
 
 ## Local File Safety
 

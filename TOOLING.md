@@ -12,6 +12,9 @@ The first local build used existing system tools already present on this Mac:
 - `clang`
 - `codesign`
 - `/usr/bin/python3`
+- `hdiutil`
+- `ditto`
+- `shasum`
 
 These were not installed for this project, so there is nothing project-specific to uninstall.
 
@@ -21,6 +24,7 @@ These were not installed for this project, so there is nothing project-specific 
 |---|---|---|---|---|---|
 | 2026-06-29 | None | - | - | Project created with docs only | Nothing to uninstall |
 | 2026-06-29 | Existing Xcode Command Line Tools | system-provided | already present | Build local Swift menu bar app | Not installed by this project |
+| 2026-06-29 | Existing macOS packaging tools | system-provided | already present | Package DMG, zip, and SHA-256 checksums | Not installed by this project |
 
 ## Rule
 
