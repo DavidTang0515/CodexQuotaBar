@@ -27,7 +27,16 @@ Dropdown menu:
 
 Floating ball:
 
-![CodexQuotaBar floating ball preview](docs/assets/floating-ball-preview.png)
+<table>
+  <tr>
+    <td align="center"><img src="docs/assets/floating-ball-preview.png" alt="CodexQuotaBar floating ball healthy state" width="54"></td>
+    <td align="center"><img src="docs/assets/floating-ball-warning-preview.png" alt="CodexQuotaBar floating ball warning state" width="54"></td>
+  </tr>
+  <tr>
+    <td align="center">Healthy</td>
+    <td align="center">Mixed</td>
+  </tr>
+</table>
 
 ## First Version Scope
 
