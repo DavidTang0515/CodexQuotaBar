@@ -40,6 +40,7 @@ Dropdown menu:
   - 5-hour reset time
   - 7-day reset time
   - Manual refresh
+  - Optional floating ball
   - Open Codex
   - Quit
 
@@ -63,6 +64,12 @@ Uninstall:
 2. Delete `/Applications/CodexQuotaBar.app`.
 
 The first release is ad-hoc signed and not notarized. It does not install a LaunchAgent, login item, daemon, or auto-updater.
+
+## Versioning
+
+- `v0.1.0` is the first public test release.
+- New experimental features land on `main` first.
+- The optional floating ball is experimental on `main`; if it stays, the next release should be `v0.2.0`.
 
 ## Safety Boundaries
 

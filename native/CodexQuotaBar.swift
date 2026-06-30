@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
+    private let floatingBallItem = NSMenuItem(title: "Show Floating Ball", action: #selector(toggleFloatingBall), keyEquivalent: "b")
     private let fiveHourItem = NSMenuItem(title: "5h: --", action: nil, keyEquivalent: "")
     private let sevenDayItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset: --", action: nil, keyEquivalent: "")
@@ -24,6 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let stateItem = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
     private var timer: Timer?
     private var isRefreshing = false
+    private var latestSnapshot: QuotaSnapshot?
+    private var floatingPanel: NSPanel?
+    private var floatingView: FloatingBallView?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -49,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(updatedItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(refreshItem)
+        floatingBallItem.target = self
+        menu.addItem(floatingBallItem)
 
         let openCodex = NSMenuItem(title: "Open Codex", action: #selector(openCodex), keyEquivalent: "o")
         openCodex.target = self
@@ -160,7 +166,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func apply(snapshot: QuotaSnapshot?) {
+        latestSnapshot = snapshot
         updateButton(snapshot: snapshot, loading: false)
+        floatingView?.snapshot = snapshot
 
         guard let snapshot else {
             stateItem.title = "Unavailable"
@@ -257,6 +265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
     }
 
+    private func quotaColor(percent: Int?) -> NSColor {
+        quotaColor(percent: percent, loading: false, ok: percent != nil)
+    }
+
     private func percentText(_ value: Int?) -> String {
         guard let value else { return "--%" }
         return "\(max(0, min(100, value)))%"
@@ -279,8 +291,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Codex.app"))
     }
 
+    @objc private func toggleFloatingBall() {
+        if let floatingPanel, floatingPanel.isVisible {
+            floatingPanel.orderOut(nil)
+            floatingBallItem.title = "Show Floating Ball"
+            return
+        }
+
+        showFloatingBall()
+    }
+
+    private func showFloatingBall() {
+        if floatingPanel == nil {
+            let size = NSSize(width: 54, height: 54)
+            let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+            let origin = NSPoint(x: screenFrame.maxX - size.width - 28, y: screenFrame.maxY - size.height - 80)
+            let panel = NSPanel(
+                contentRect: NSRect(origin: origin, size: size),
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered,
+                defer: false
+            )
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.level = .floating
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.hidesOnDeactivate = false
+            panel.isMovableByWindowBackground = true
+
+            let view = FloatingBallView(frame: NSRect(origin: .zero, size: size))
+            view.snapshot = latestSnapshot
+            panel.contentView = view
+
+            floatingPanel = panel
+            floatingView = view
+        }
+
+        floatingPanel?.makeKeyAndOrderFront(nil)
+        floatingBallItem.title = "Hide Floating Ball"
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+}
+
+final class FloatingBallView: NSView {
+    var snapshot: QuotaSnapshot? {
+        didSet {
+            needsDisplay = true
+        }
+    }
+
+    override var mouseDownCanMoveWindow: Bool {
+        true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let bounds = self.bounds.insetBy(dx: 6, dy: 6)
+        NSColor.clear.setFill()
+        dirtyRect.fill()
+
+        let background = NSBezierPath(ovalIn: bounds)
+        NSColor.black.withAlphaComponent(0.58).setFill()
+        background.fill()
+
+        let five = snapshot?.fiveHourLeft
+        let seven = snapshot?.sevenDayLeft
+        drawRing(in: bounds.insetBy(dx: 7, dy: 7), percent: five, color: color(for: five), width: 4.5)
+        drawRing(in: bounds.insetBy(dx: 16, dy: 16), percent: seven, color: color(for: seven), width: 3.2)
+    }
+
+    private func drawRing(in rect: NSRect, percent: Int?, color: NSColor, width: CGFloat) {
+        let track = NSBezierPath(ovalIn: rect)
+        NSColor.white.withAlphaComponent(0.16).setStroke()
+        track.lineWidth = width
+        track.stroke()
+
+        guard let percent else {
+            return
+        }
+        let clamped = max(0, min(100, percent))
+        let start: CGFloat = 90
+        let end = start - CGFloat(clamped) / 100.0 * 360.0
+        let path = NSBezierPath()
+        path.appendArc(
+            withCenter: NSPoint(x: rect.midX, y: rect.midY),
+            radius: min(rect.width, rect.height) / 2,
+            startAngle: start,
+            endAngle: end,
+            clockwise: true
+        )
+        color.setStroke()
+        path.lineWidth = width
+        path.lineCapStyle = .round
+        path.stroke()
+    }
+
+    private func color(for percent: Int?) -> NSColor {
+        guard let percent else {
+            return NSColor(calibratedRed: 0.55, green: 0.69, blue: 0.79, alpha: 0.65)
+        }
+        if percent > 60 {
+            return NSColor(calibratedRed: 0.28, green: 0.78, blue: 0.48, alpha: 1.0)
+        }
+        if percent >= 20 {
+            return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.28, alpha: 1.0)
+        }
+        return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
+    }
+
+    private func percentText(_ value: Int?) -> String {
+        guard let value else { return "--" }
+        return "\(max(0, min(100, value)))"
     }
 }
 

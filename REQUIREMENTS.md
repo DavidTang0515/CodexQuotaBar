@@ -37,8 +37,12 @@ How much Codex quota do I have left?
   - Manual refresh
   - Last refresh time
   - Reset time if available
+  - Show or hide the optional floating ball
   - Open Codex
   - Quit
+- Floating ball mode is optional and experimental.
+- Floating ball mode should not be shown by default.
+- Floating ball mode should not persist position in the first version.
 
 ## Deployment
 
