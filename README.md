@@ -25,6 +25,10 @@ Dropdown menu:
 
 ![CodexQuotaBar dropdown menu preview](docs/assets/menu-preview.png)
 
+Floating ball:
+
+![CodexQuotaBar floating ball preview](docs/assets/floating-ball-preview.png)
+
 ## First Version Scope
 
 - Show 5-hour quota percentage in the menu bar.
