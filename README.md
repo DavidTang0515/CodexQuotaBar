@@ -15,6 +15,8 @@ The app is lightweight, local-first, and easy to inspect.
 
 See [REQUIREMENTS.md](REQUIREMENTS.md) for the current product requirements and safety boundaries.
 
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Actual Preview
 
 Menu bar display:
