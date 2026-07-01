@@ -4,7 +4,7 @@
 
 CodexQuotaBar is a lightweight macOS menu bar utility for checking Codex quota without opening Codex repeatedly.
 
-The first version should answer one question quickly:
+The app should answer one question quickly:
 
 ```text
 How much Codex quota do I have left?
@@ -38,11 +38,13 @@ How much Codex quota do I have left?
   - Last refresh time
   - Reset time if available
   - Show or hide the optional floating ball
+  - Enable or disable Open at Login
   - Open Codex
   - Quit
 - Floating ball mode is optional and experimental.
-- Floating ball mode should not be shown by default.
-- Floating ball mode should not persist position in the first version.
+- Floating ball mode should be shown by default.
+- Floating ball visibility and position should be remembered.
+- Only UI preferences may be persisted.
 
 ## Deployment
 
@@ -50,7 +52,9 @@ How much Codex quota do I have left?
 - First public test version should ship as a DMG.
 - The DMG should let users manually drag `CodexQuotaBar.app` into `/Applications`.
 - The app and scripts should not automatically write into `/Applications`.
-- First version should avoid LaunchAgent, login item, daemon, background service, or auto-updater.
+- The app should avoid LaunchAgent, daemon, background service, or auto-updater.
+- Open at Login is allowed only as an explicit user-controlled toggle.
+- Open at Login should use macOS ServiceManagement instead of a custom LaunchAgent plist.
 - Prefer a local build/run workflow before packaging.
 - GitHub Releases should include a DMG, a zip fallback, install notes, and SHA-256 checksums.
 
@@ -62,7 +66,9 @@ How much Codex quota do I have left?
 - Do not scan unrelated folders.
 - Do not delete files or directories.
 - Do not use batch-delete commands such as `rm -rf`.
-- Do not create logs, histories, caches, or reports in the first version.
+- Do not create logs, histories, caches, or reports.
+- UI preferences may be saved to `~/Library/Application Support/CodexQuotaBar/preferences.json`.
+- UI preferences may include floating ball visibility and position only.
 - Do not read browser cookies.
 - Do not read `~/.codex/auth.json`.
 - Do not store prompts or responses.
@@ -83,13 +89,13 @@ How much Codex quota do I have left?
 - If the app cannot read live quota, show a clear unavailable state instead of guessing.
 - Avoid aggressive polling that may disturb Codex usage windows or waste battery.
 
-## First Version Non-Goals
+## Non-Goals
 
 - No SSD temperature.
 - No CPU or RAM display.
 - No auto-update.
 - No LaunchAgent.
-- No login item.
+- No custom LaunchAgent login item.
 - No local database.
 - No telemetry.
 - No analytics.

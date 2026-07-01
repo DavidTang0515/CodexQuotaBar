@@ -18,6 +18,12 @@ The first local build used existing system tools already present on this Mac:
 
 These were not installed for this project, so there is nothing project-specific to uninstall.
 
+Runtime-created files:
+
+- `~/Library/Application Support/CodexQuotaBar/preferences.json`
+
+This file stores UI preferences only, such as floating ball visibility and position. It can be deleted during uninstall if a fully clean removal is desired.
+
 ## Install Log
 
 | Date | Tool | Version | Install Command | Purpose | Uninstall Notes |

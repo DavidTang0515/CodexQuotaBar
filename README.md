@@ -11,7 +11,7 @@ Show Codex 5-hour and 7-day quota directly in the macOS status bar with a compac
 7d  oo---  42%
 ```
 
-The first version should be lightweight, local-first, and easy to inspect.
+The app is lightweight, local-first, and easy to inspect.
 
 See [REQUIREMENTS.md](REQUIREMENTS.md) for the current product requirements and safety boundaries.
 
@@ -38,7 +38,7 @@ Floating ball:
   </tr>
 </table>
 
-## First Version Scope
+## Current Scope
 
 - Show 5-hour quota percentage in the menu bar.
 - Show 7-day quota percentage in the menu bar.
@@ -48,12 +48,15 @@ Floating ball:
   - Orange: 20% to 60%
   - Red: less than 20%
 - Refresh automatically every 5 minutes.
+- Show a small floating ball by default.
+- Remember floating ball visibility and position.
 - Provide a menu with:
   - Last refresh time
   - 5-hour reset time
   - 7-day reset time
   - Manual refresh
   - Optional floating ball
+  - Open at Login toggle
   - Open Codex
   - Quit
 
@@ -75,14 +78,14 @@ Uninstall:
 
 1. Quit CodexQuotaBar from the menu bar.
 2. Delete `/Applications/CodexQuotaBar.app`.
+3. Optional clean removal: delete `~/Library/Application Support/CodexQuotaBar/preferences.json`.
 
-The first release is ad-hoc signed and not notarized. It does not install a LaunchAgent, login item, daemon, or auto-updater.
+The release is ad-hoc signed and not notarized. It does not install a LaunchAgent, daemon, or auto-updater. Open at Login is optional and controlled from the app menu.
 
 ## Versioning
 
 - `v0.1.0` is the first public test release.
-- New experimental features land on `main` first.
-- The optional floating ball is experimental on `main`; if it stays, the next release should be `v0.2.0`.
+- `v0.2.0` adds the floating ball, saved UI preferences, startup retry, and Open at Login.
 
 ## Safety Boundaries
 
@@ -90,8 +93,9 @@ The first release is ad-hoc signed and not notarized. It does not install a Laun
 - Do not read `~/.codex/auth.json`.
 - Do not scan unrelated project folders.
 - Do not store prompts or responses.
-- Do not install a LaunchAgent in the first version.
-- Do not add auto-update in the first version.
+- Store only UI preferences in `~/Library/Application Support/CodexQuotaBar/preferences.json`.
+- Do not install a LaunchAgent.
+- Do not add auto-update.
 - Do not use batch-delete commands such as `rm -rf`.
 
 ## Run Locally
@@ -114,7 +118,7 @@ The app bundle is created at:
 native/build/CodexQuotaBar.app
 ```
 
-This local build is not installed into `/Applications` and does not add a LaunchAgent, login item, daemon, or auto-updater.
+This local build is not installed into `/Applications` and does not add a LaunchAgent, daemon, or auto-updater.
 
 Package a release build:
 

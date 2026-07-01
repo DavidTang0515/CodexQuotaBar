@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ServiceManagement
 
 struct QuotaSnapshot: Decodable {
     let ok: Bool
@@ -13,26 +14,66 @@ struct QuotaSnapshot: Decodable {
     let sevenDayReset: String?
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+struct AppPreferences: Codable {
+    var showFloatingBall: Bool = true
+    var floatingBallX: Double?
+    var floatingBallY: Double?
+
+    static func load() -> AppPreferences {
+        guard let data = try? Data(contentsOf: fileURL()) else {
+            return AppPreferences()
+        }
+        return (try? JSONDecoder().decode(AppPreferences.self, from: data)) ?? AppPreferences()
+    }
+
+    func save() {
+        do {
+            let directory = Self.supportDirectory()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(self)
+            try data.write(to: Self.fileURL(), options: [.atomic])
+        } catch {
+            // Preferences are only UI convenience. Ignore write failures so quota display still works.
+        }
+    }
+
+    private static func supportDirectory() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
+        return base.appendingPathComponent("CodexQuotaBar", isDirectory: true)
+    }
+
+    private static func fileURL() -> URL {
+        supportDirectory().appendingPathComponent("preferences.json")
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
     private let floatingBallItem = NSMenuItem(title: "Show Floating Ball", action: #selector(toggleFloatingBall), keyEquivalent: "b")
+    private let openAtLoginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleOpenAtLogin), keyEquivalent: "l")
     private let fiveHourItem = NSMenuItem(title: "5h: --", action: nil, keyEquivalent: "")
     private let sevenDayItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset: --", action: nil, keyEquivalent: "")
     private let updatedItem = NSMenuItem(title: "Last refresh: --", action: nil, keyEquivalent: "")
     private let stateItem = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
     private var timer: Timer?
+    private var retryTimer: Timer?
     private var isRefreshing = false
     private var latestSnapshot: QuotaSnapshot?
     private var floatingPanel: NSPanel?
     private var floatingView: FloatingBallView?
+    private var preferences = AppPreferences.load()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         configureMenu()
         updateButton(snapshot: nil, loading: true)
+        if preferences.showFloatingBall {
+            showFloatingBall()
+        }
         refreshNow()
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.refreshNow()
@@ -41,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        retryTimer?.invalidate()
     }
 
     private func configureMenu() {
@@ -55,6 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(refreshItem)
         floatingBallItem.target = self
         menu.addItem(floatingBallItem)
+        openAtLoginItem.target = self
+        updateOpenAtLoginMenuItem()
+        menu.addItem(openAtLoginItem)
 
         let openCodex = NSMenuItem(title: "Open Codex", action: #selector(openCodex), keyEquivalent: "o")
         openCodex.target = self
@@ -181,14 +226,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if snapshot.ok {
             stateItem.title = "Live quota"
+            retryTimer?.invalidate()
+            retryTimer = nil
         } else {
             stateItem.title = "Unavailable: \(snapshot.error ?? "unknown error")"
+            scheduleRetryIfNeeded()
         }
 
         fiveHourItem.title = "5h: \(percentText(snapshot.fiveHourLeft))"
         sevenDayItem.title = "7d: \(percentText(snapshot.sevenDayLeft))"
         resetItem.title = "Reset: 5h \(shortTime(snapshot.fiveHourReset)) / 7d \(shortTime(snapshot.sevenDayReset))"
         updatedItem.title = "Last refresh: \(shortTime(snapshot.updatedAt))"
+    }
+
+    private func scheduleRetryIfNeeded() {
+        guard retryTimer == nil else {
+            return
+        }
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+            self?.retryTimer = nil
+            self?.refreshNow()
+        }
     }
 
     private func updateButton(snapshot: QuotaSnapshot?, loading: Bool) {
@@ -294,18 +352,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleFloatingBall() {
         if let floatingPanel, floatingPanel.isVisible {
             floatingPanel.orderOut(nil)
+            preferences.showFloatingBall = false
+            preferences.save()
             floatingBallItem.title = "Show Floating Ball"
             return
         }
 
+        preferences.showFloatingBall = true
+        preferences.save()
         showFloatingBall()
     }
 
     private func showFloatingBall() {
         if floatingPanel == nil {
             let size = NSSize(width: 54, height: 54)
-            let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
-            let origin = NSPoint(x: screenFrame.maxX - size.width - 28, y: screenFrame.maxY - size.height - 80)
+            let origin = floatingBallOrigin(size: size)
             let panel = NSPanel(
                 contentRect: NSRect(origin: origin, size: size),
                 styleMask: [.borderless, .nonactivatingPanel],
@@ -318,6 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.hidesOnDeactivate = false
             panel.isMovableByWindowBackground = true
+            panel.delegate = self
 
             let view = FloatingBallView(frame: NSRect(origin: .zero, size: size))
             view.snapshot = latestSnapshot
@@ -329,6 +391,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         floatingPanel?.makeKeyAndOrderFront(nil)
         floatingBallItem.title = "Hide Floating Ball"
+    }
+
+    private func floatingBallOrigin(size: NSSize) -> NSPoint {
+        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let defaultOrigin = NSPoint(x: screenFrame.maxX - size.width - 28, y: screenFrame.maxY - size.height - 80)
+
+        guard let savedX = preferences.floatingBallX, let savedY = preferences.floatingBallY else {
+            return defaultOrigin
+        }
+
+        let minX = screenFrame.minX + 8
+        let maxX = screenFrame.maxX - size.width - 8
+        let minY = screenFrame.minY + 8
+        let maxY = screenFrame.maxY - size.height - 8
+        return NSPoint(
+            x: min(max(CGFloat(savedX), minX), maxX),
+            y: min(max(CGFloat(savedY), minY), maxY)
+        )
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard let movedWindow = notification.object as? NSWindow, movedWindow === floatingPanel else {
+            return
+        }
+        preferences.floatingBallX = Double(movedWindow.frame.origin.x)
+        preferences.floatingBallY = Double(movedWindow.frame.origin.y)
+        preferences.save()
+    }
+
+    @objc private func toggleOpenAtLogin() {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+            updateOpenAtLoginMenuItem()
+        } catch {
+            stateItem.title = "Open at Login failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func updateOpenAtLoginMenuItem() {
+        let enabled = SMAppService.mainApp.status == .enabled
+        openAtLoginItem.state = enabled ? .on : .off
+        openAtLoginItem.title = enabled ? "Open at Login: On" : "Open at Login: Off"
     }
 
     @objc private func quit() {
