@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexQuotaBar"
-VERSION="0.2.0"
+VERSION="0.2.1"
 APP_BUNDLE="$ROOT_DIR/native/build/$APP_NAME.app"
 RELEASE_DIR="$ROOT_DIR/release"
 STAGE_DIR="$RELEASE_DIR/dmg-stage-$VERSION"
@@ -30,7 +30,7 @@ Install:
 
 Requirements:
 - macOS 13 or newer.
-- Codex desktop app or Codex CLI installed and signed in.
+- ChatGPT desktop app, legacy Codex desktop app, or Codex CLI installed and signed in.
 
 Uninstall:
 1. Quit CodexQuotaBar from the menu bar.
@@ -39,6 +39,7 @@ Uninstall:
 
 Privacy:
 - Reads local Codex quota through the local Codex app-server.
+- The Codex CLI may maintain its own runtime state under ~/.codex.
 - Does not read browser cookies.
 - Does not read ~/.codex/auth.json.
 - Does not store prompts or responses.

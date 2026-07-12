@@ -24,7 +24,7 @@
 - Show percentage text at the right side.
 - Add menu actions:
   - Refresh
-  - Open Codex
+  - Open ChatGPT
   - Quit
 
 ## Phase 3: Visual Polish

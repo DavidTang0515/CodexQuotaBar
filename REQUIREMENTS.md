@@ -39,7 +39,7 @@ How much Codex quota do I have left?
   - Reset time if available
   - Show or hide the optional floating ball
   - Enable or disable Open at Login
-  - Open Codex
+  - Open ChatGPT
   - Quit
 - Floating ball mode is optional and experimental.
 - Floating ball mode should be shown by default.
@@ -72,10 +72,12 @@ How much Codex quota do I have left?
 - Do not read browser cookies.
 - Do not read `~/.codex/auth.json`.
 - Do not store prompts or responses.
+- The Codex CLI may maintain its own runtime state under `~/.codex`; CodexQuotaBar must not inspect or modify that state directly.
 
 ## Data Source
 
 - Prefer reading quota through the local Codex app-server.
+- Support the CLI bundled with ChatGPT, a standalone Codex CLI, and the legacy Codex desktop app.
 - Only request quota/rate-limit information.
 - Do not inspect conversation contents.
 - Do not inspect session file contents unless explicitly approved later.

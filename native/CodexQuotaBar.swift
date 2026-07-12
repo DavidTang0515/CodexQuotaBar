@@ -101,9 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateOpenAtLoginMenuItem()
         menu.addItem(openAtLoginItem)
 
-        let openCodex = NSMenuItem(title: "Open Codex", action: #selector(openCodex), keyEquivalent: "o")
-        openCodex.target = self
-        menu.addItem(openCodex)
+        let openChatGPT = NSMenuItem(title: "Open ChatGPT", action: #selector(openChatGPT), keyEquivalent: "o")
+        openChatGPT.target = self
+        menu.addItem(openChatGPT)
 
         menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(title: "Quit CodexQuotaBar", action: #selector(quit), keyEquivalent: "q")
@@ -164,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "HOME": NSHomeDirectory(),
             "CODEX_HOME": NSHomeDirectory() + "/.codex",
             "LOGNAME": NSUserName(),
-            "PATH": "/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": "/Applications/ChatGPT.app/Contents/Resources:/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "SHELL": "/bin/zsh",
             "TMPDIR": NSTemporaryDirectory(),
             "USER": NSUserName()
@@ -345,8 +345,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ISO8601DateFormatter().string(from: Date())
     }
 
-    @objc private func openCodex() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Codex.app"))
+    @objc private func openChatGPT() {
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex") {
+            NSWorkspace.shared.open(appURL)
+            return
+        }
+
+        for path in [
+            "/Applications/ChatGPT.app",
+            NSHomeDirectory() + "/Applications/ChatGPT.app",
+            "/Applications/Codex.app",
+            NSHomeDirectory() + "/Applications/Codex.app"
+        ] where FileManager.default.fileExists(atPath: path) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            return
+        }
+
+        stateItem.title = "ChatGPT or Codex app not found."
     }
 
     @objc private func toggleFloatingBall() {

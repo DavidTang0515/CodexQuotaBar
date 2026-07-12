@@ -59,7 +59,7 @@ Floating ball:
   - Manual refresh
   - Optional floating ball
   - Open at Login toggle
-  - Open Codex
+  - Open ChatGPT
   - Quit
 
 ## Install From GitHub Releases
@@ -74,7 +74,7 @@ Download the latest `CodexQuotaBar-*.dmg` from GitHub Releases.
 Requirements:
 
 - macOS 13 or newer.
-- Codex desktop app or Codex CLI installed and signed in.
+- ChatGPT desktop app, legacy Codex desktop app, or Codex CLI installed and signed in.
 
 Uninstall:
 
@@ -88,6 +88,7 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 
 - `v0.1.0` is the first public test release.
 - `v0.2.0` adds the floating ball, saved UI preferences, startup retry, and Open at Login.
+- `v0.2.1` restores quota access after the Codex desktop app moved into ChatGPT.
 
 ## Safety Boundaries
 
@@ -95,6 +96,7 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 - Do not read `~/.codex/auth.json`.
 - Do not scan unrelated project folders.
 - Do not store prompts or responses.
+- The Codex CLI may maintain its own runtime state under `~/.codex`.
 - Store only UI preferences in `~/Library/Application Support/CodexQuotaBar/preferences.json`.
 - Do not install a LaunchAgent.
 - Do not add auto-update.

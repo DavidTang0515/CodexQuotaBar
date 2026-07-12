@@ -13,7 +13,7 @@ import time
 
 
 TIMEOUT_SECONDS = 10
-CLIENT_INFO = {"name": "codex-quota-bar", "title": "CodexQuotaBar", "version": "0.2.0"}
+CLIENT_INFO = {"name": "codex-quota-bar", "title": "CodexQuotaBar", "version": "0.2.1"}
 
 
 class QuotaError(Exception):
@@ -21,11 +21,19 @@ class QuotaError(Exception):
 
 
 def find_codex() -> str | None:
+    override = os.environ.get("CODEX_CLI_PATH")
+    if override:
+        candidate = pathlib.Path(override).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
     found = shutil.which("codex")
     if found:
         return found
 
     for candidate in (
+        pathlib.Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
+        pathlib.Path.home() / "Applications/ChatGPT.app/Contents/Resources/codex",
         pathlib.Path("/Applications/Codex.app/Contents/Resources/codex"),
         pathlib.Path.home() / "Applications/Codex.app/Contents/Resources/codex",
     ):
@@ -45,7 +53,7 @@ def codex_env() -> dict[str, str]:
         "HOME": os.environ.get("HOME") or home,
         "LOGNAME": os.environ.get("LOGNAME") or user,
         "PATH": os.environ.get("PATH")
-        or "/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        or "/Applications/ChatGPT.app/Contents/Resources:/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "SHELL": os.environ.get("SHELL") or "/bin/zsh",
         "TMPDIR": os.environ.get("TMPDIR") or "/tmp",
         "USER": user,
@@ -155,18 +163,21 @@ def normalize(bucket: dict) -> dict:
 def read_quota() -> dict:
     codex = find_codex()
     if not codex:
-        raise QuotaError("Codex CLI not found. Open Codex or install the Codex CLI.")
+        raise QuotaError("Codex CLI not found. Install or open ChatGPT, or install the Codex CLI.")
 
-    proc = subprocess.Popen(
-        [codex, "app-server", "--listen", "stdio://"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        env=codex_env(),
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            [codex, "app-server", "--listen", "stdio://"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=codex_env(),
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise QuotaError(f"Could not start Codex CLI: {exc}") from exc
 
     try:
         if proc.stdin is None or proc.stdout is None:
