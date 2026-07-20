@@ -754,6 +754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.hidesOnDeactivate = false
             panel.isMovableByWindowBackground = true
+            panel.acceptsMouseMovedEvents = true
             panel.delegate = self
 
             let view = FloatingBallView(frame: NSRect(origin: .zero, size: size))
@@ -846,16 +847,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 final class FloatingBallView: NSView {
     var toolTipProvider: ((QuotaSnapshot?) -> String)?
+    private var hoverPanel: NSPanel?
 
     var snapshot: QuotaSnapshot? {
         didSet {
             toolTip = toolTipProvider?(snapshot)
+            if hoverPanel?.isVisible == true {
+                showHoverPanel()
+            }
             needsDisplay = true
         }
     }
 
     override var mouseDownCanMoveWindow: Bool {
         true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        showHoverPanel()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hideHoverPanel()
+    }
+
+    private func showHoverPanel() {
+        guard let window, let text = toolTipProvider?(snapshot), !text.isEmpty else {
+            return
+        }
+
+        let size = HoverInfoView.size(for: text)
+        let screenFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        var origin = NSPoint(x: window.frame.maxX + 8, y: window.frame.midY - size.height / 2)
+        if origin.x + size.width > screenFrame.maxX - 8 {
+            origin.x = window.frame.minX - size.width - 8
+        }
+        origin.x = min(max(origin.x, screenFrame.minX + 8), screenFrame.maxX - size.width - 8)
+        origin.y = min(max(origin.y, screenFrame.minY + 8), screenFrame.maxY - size.height - 8)
+
+        let panel = hoverPanel ?? NSPanel(
+            contentRect: NSRect(origin: origin, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = true
+        panel.contentView = HoverInfoView(frame: NSRect(origin: .zero, size: size), text: text)
+        hoverPanel = panel
+        panel.orderFront(nil)
+    }
+
+    private func hideHoverPanel() {
+        hoverPanel?.orderOut(nil)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -915,6 +979,49 @@ final class FloatingBallView: NSView {
     private func percentText(_ value: Int?) -> String {
         guard let value else { return "--" }
         return "\(max(0, min(100, value)))"
+    }
+}
+
+final class HoverInfoView: NSView {
+    private let text: String
+
+    init(frame frameRect: NSRect, text: String) {
+        self.text = text
+        super.init(frame: frameRect)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        dirtyRect.fill()
+
+        let bubble = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8)
+        NSColor.black.withAlphaComponent(0.78).setFill()
+        bubble.fill()
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 2
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraph
+        ]
+        NSString(string: text).draw(in: bounds.insetBy(dx: 10, dy: 8), withAttributes: attributes)
+    }
+
+    static func size(for text: String) -> NSSize {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+        ]
+        let textSize = NSString(string: text).boundingRect(
+            with: NSSize(width: 260, height: 200),
+            options: [.usesLineFragmentOrigin],
+            attributes: attributes
+        ).size
+        return NSSize(width: ceil(textSize.width) + 22, height: ceil(textSize.height) + 18)
     }
 }
 
