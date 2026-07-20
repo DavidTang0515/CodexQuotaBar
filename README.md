@@ -95,6 +95,7 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 - `v0.2.0` adds the floating ball, saved UI preferences, startup retry, and Open at Login.
 - `v0.2.1` restores quota access after the Codex desktop app moved into ChatGPT.
 - `v0.3.0` adds local quota history, usage trend estimates, and local data cleanup.
+- `v0.3.1-temp` is a temporary branch build for the current single-quota Codex limit shape.
 
 ## Safety Boundaries
 

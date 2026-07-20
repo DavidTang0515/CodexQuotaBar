@@ -51,7 +51,9 @@ class NormalizeTests(unittest.TestCase):
 
         self.assertTrue(snapshot["ok"])
         self.assertEqual(snapshot["plan"], "plus")
+        self.assertEqual(snapshot["currentQuotaLeft"], 19)
         self.assertEqual(snapshot["fiveHourLeft"], 19)
+        self.assertEqual(snapshot["currentQuotaReset"], "2027-01-15T08:00:00Z")
         self.assertEqual(snapshot["sevenDayLeft"], 87)
 
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexQuotaBar"
-VERSION="0.3.0"
+VERSION="0.3.1-temp"
 APP_BUNDLE="$ROOT_DIR/native/build/$APP_NAME.app"
 RELEASE_DIR="$ROOT_DIR/release"
 STAGE_DIR="$RELEASE_DIR/dmg-stage-$VERSION"

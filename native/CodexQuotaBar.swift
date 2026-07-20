@@ -9,10 +9,20 @@ struct QuotaSnapshot: Decodable {
     let source: String?
     let error: String?
     let plan: String?
+    let currentQuotaLeft: Int?
+    let currentQuotaReset: String?
     let fiveHourLeft: Int?
     let sevenDayLeft: Int?
     let fiveHourReset: String?
     let sevenDayReset: String?
+
+    var displayedQuotaLeft: Int? {
+        currentQuotaLeft ?? fiveHourLeft
+    }
+
+    var displayedQuotaReset: String? {
+        currentQuotaReset ?? fiveHourReset
+    }
 }
 
 struct AppPreferences: Codable {
@@ -77,15 +87,15 @@ final class QuotaHistoryStore {
     }
 
     func record(snapshot: QuotaSnapshot) {
-        guard snapshot.ok, snapshot.fiveHourLeft != nil || snapshot.sevenDayLeft != nil else {
+        guard snapshot.ok, snapshot.displayedQuotaLeft != nil || snapshot.sevenDayLeft != nil else {
             return
         }
 
         let entry = QuotaHistoryEntry(
             capturedAt: snapshot.updatedAt ?? isoString(Date()),
-            fiveHourLeft: snapshot.fiveHourLeft,
+            fiveHourLeft: snapshot.displayedQuotaLeft,
             sevenDayLeft: snapshot.sevenDayLeft,
-            fiveHourReset: snapshot.fiveHourReset,
+            fiveHourReset: snapshot.displayedQuotaReset,
             sevenDayReset: snapshot.sevenDayReset,
             plan: snapshot.plan,
             source: snapshot.source
@@ -111,7 +121,7 @@ final class QuotaHistoryStore {
             currentRate: rate(entries: entries, now: now, window: 24 * 60 * 60, offset: 0, kind: .sevenDay),
             previousRate: rate(entries: entries, now: now, window: 24 * 60 * 60, offset: 24 * 60 * 60, kind: .sevenDay)
         )
-        return (fiveHour, sevenDay, projectedText(entries: entries, fiveHourRate: fiveHour.currentRate))
+        return (fiveHour, sevenDay, projectedText(entries: entries, currentRate: fiveHour.currentRate))
     }
 
     static func moveLocalDataToTrash() throws {
@@ -307,17 +317,17 @@ final class QuotaHistoryStore {
         return Double(consumed) / elapsed * scale
     }
 
-    private func projectedText(entries: [QuotaHistoryEntry], fiveHourRate: Double?) -> String {
-        guard let latest = entries.last, let left = latest.fiveHourLeft, let rate = fiveHourRate, rate > 0 else {
-            return "Projected 5h: --"
+    private func projectedText(entries: [QuotaHistoryEntry], currentRate: Double?) -> String {
+        guard let latest = entries.last, let left = latest.fiveHourLeft, let rate = currentRate, rate > 0 else {
+            return "Projected quota: --"
         }
         let hours = Double(left) / rate
         if hours < 1 {
-            return "Projected 5h: ~\(max(1, Int(round(hours * 60))))m"
+            return "Projected quota: ~\(max(1, Int(round(hours * 60))))m"
         }
         let wholeHours = Int(hours)
         let minutes = Int(round((hours - Double(wholeHours)) * 60))
-        return "Projected 5h: ~\(wholeHours)h \(minutes)m"
+        return "Projected quota: ~\(wholeHours)h \(minutes)m"
     }
 
     private func left(_ entry: QuotaHistoryEntry, kind: TrendKind) -> Int? {
@@ -343,14 +353,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
     private let floatingBallItem = NSMenuItem(title: "Show Floating Ball", action: #selector(toggleFloatingBall), keyEquivalent: "b")
     private let openAtLoginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleOpenAtLogin), keyEquivalent: "l")
-    private let fiveHourItem = NSMenuItem(title: "5h: --", action: nil, keyEquivalent: "")
-    private let sevenDayItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
+    private let currentQuotaItem = NSMenuItem(title: "Current quota: --", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset: --", action: nil, keyEquivalent: "")
     private let updatedItem = NSMenuItem(title: "Last refresh: --", action: nil, keyEquivalent: "")
     private let trendHeaderItem = NSMenuItem(title: "Usage trend", action: nil, keyEquivalent: "")
-    private let fiveHourTrendItem = NSMenuItem(title: "5h: --", action: nil, keyEquivalent: "")
-    private let sevenDayTrendItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
-    private let projectedItem = NSMenuItem(title: "Projected 5h: --", action: nil, keyEquivalent: "")
+    private let currentTrendItem = NSMenuItem(title: "Quota: --", action: nil, keyEquivalent: "")
+    private let projectedItem = NSMenuItem(title: "Projected quota: --", action: nil, keyEquivalent: "")
     private let clearLocalDataItem = NSMenuItem(title: "Clear Local Data...", action: #selector(clearLocalData), keyEquivalent: "")
     private let stateItem = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
     private let historyStore = QuotaHistoryStore()
@@ -384,14 +392,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshItem.target = self
         menu.addItem(stateItem)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(fiveHourItem)
-        menu.addItem(sevenDayItem)
+        menu.addItem(currentQuotaItem)
         menu.addItem(resetItem)
         menu.addItem(updatedItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(trendHeaderItem)
-        menu.addItem(fiveHourTrendItem)
-        menu.addItem(sevenDayTrendItem)
+        menu.addItem(currentTrendItem)
         menu.addItem(projectedItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(refreshItem)
@@ -452,6 +458,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 source: "unavailable",
                 error: "Helper not found.",
                 plan: nil,
+                currentQuotaLeft: nil,
+                currentQuotaReset: nil,
                 fiveHourLeft: nil,
                 sevenDayLeft: nil,
                 fiveHourReset: nil,
@@ -485,6 +493,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 source: "unavailable",
                 error: "Could not start helper: \(error.localizedDescription)",
                 plan: nil,
+                currentQuotaLeft: nil,
+                currentQuotaReset: nil,
                 fiveHourLeft: nil,
                 sevenDayLeft: nil,
                 fiveHourReset: nil,
@@ -504,6 +514,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 source: "unavailable",
                 error: "Could not parse helper output.",
                 plan: nil,
+                currentQuotaLeft: nil,
+                currentQuotaReset: nil,
                 fiveHourLeft: nil,
                 sevenDayLeft: nil,
                 fiveHourReset: nil,
@@ -519,8 +531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard let snapshot else {
             stateItem.title = "Unavailable"
-            fiveHourItem.title = "5h: --"
-            sevenDayItem.title = "7d: --"
+            currentQuotaItem.title = "Current quota: --"
             resetItem.title = "Reset: --"
             updatedItem.title = "Last refresh: --"
             return
@@ -536,17 +547,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             scheduleRetryIfNeeded()
         }
 
-        fiveHourItem.title = "5h: \(percentText(snapshot.fiveHourLeft))"
-        sevenDayItem.title = "7d: \(percentText(snapshot.sevenDayLeft))"
-        resetItem.title = "Reset: 5h \(shortTime(snapshot.fiveHourReset)) / 7d \(shortTime(snapshot.sevenDayReset))"
+        currentQuotaItem.title = "Current quota: \(percentText(snapshot.displayedQuotaLeft))"
+        resetItem.title = "Reset: \(shortDateTime(snapshot.displayedQuotaReset))"
         updatedItem.title = "Last refresh: \(shortTime(snapshot.updatedAt))"
         updateTrendItems()
     }
 
     private func updateTrendItems() {
         let trends = historyStore.trends()
-        fiveHourTrendItem.title = "5h: \(rateText(trends.fiveHour.currentRate, unit: "h")) \(comparisonText(current: trends.fiveHour.currentRate, previous: trends.fiveHour.previousRate))"
-        sevenDayTrendItem.title = "7d: \(rateText(trends.sevenDay.currentRate, unit: "day")) \(comparisonText(current: trends.sevenDay.currentRate, previous: trends.sevenDay.previousRate))"
+        currentTrendItem.title = "Quota: \(rateText(trends.fiveHour.currentRate, unit: "h")) \(comparisonText(current: trends.fiveHour.currentRate, previous: trends.fiveHour.previousRate))"
         projectedItem.title = trends.projection
     }
 
@@ -561,18 +570,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func updateButton(snapshot: QuotaSnapshot?, loading: Bool) {
-        let five = snapshot?.fiveHourLeft
-        let seven = snapshot?.sevenDayLeft
-        let image = renderStatusImage(fiveHour: five, sevenDay: seven, loading: loading, ok: snapshot?.ok ?? false)
+        let quota = snapshot?.displayedQuotaLeft
+        let image = renderStatusImage(quota: quota, loading: loading, ok: snapshot?.ok ?? false)
         statusItem.length = image.size.width
         statusItem.button?.image = image
         statusItem.button?.imagePosition = .imageOnly
-        statusItem.button?.toolTip = "CodexQuotaBar 5h \(percentText(five)) / 7d \(percentText(seven))"
+        statusItem.button?.toolTip = statusToolTip(snapshot: snapshot)
     }
 
-    private func renderStatusImage(fiveHour: Int?, sevenDay: Int?, loading: Bool, ok: Bool) -> NSImage {
+    private func renderStatusImage(quota: Int?, loading: Bool, ok: Bool) -> NSImage {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
-        let size = NSSize(width: 84, height: 24)
+        let size = NSSize(width: 96, height: 16)
         let image = NSImage(size: size)
         image.lockFocus()
 
@@ -580,8 +588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSColor.clear.setFill()
         rect.fill()
 
-        drawRow(label: "5h", percent: fiveHour, y: 13.0, loading: loading, ok: ok)
-        drawRow(label: "7d", percent: sevenDay, y: 2.5, loading: loading, ok: ok)
+        drawRow(label: "Quota", percent: quota, y: 3.8, loading: loading, ok: ok)
 
         image.unlockFocus()
         image.isTemplate = false
@@ -599,7 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let filled = barsFilled(percent)
         let color = quotaColor(percent: percent, loading: loading, ok: ok)
         for index in 0..<5 {
-            let x = CGFloat(21 + index * 7)
+            let x = CGFloat(38 + index * 7)
             let bar = NSBezierPath(roundedRect: NSRect(x: x, y: y + 1.4, width: 4.0, height: 7.2), xRadius: 2.0, yRadius: 2.0)
             if index < filled {
                 color.setFill()
@@ -613,7 +620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .font: NSFont.monospacedDigitSystemFont(ofSize: 8.2, weight: .bold),
             .foregroundColor: NSColor.white
         ]
-        NSString(string: percentText(percent)).draw(at: NSPoint(x: 60, y: y), withAttributes: percentAttributes)
+        NSString(string: percentText(percent)).draw(at: NSPoint(x: 76, y: y), withAttributes: percentAttributes)
     }
 
     private func barsFilled(_ percent: Int?) -> Int {
@@ -668,6 +675,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let output = DateFormatter()
         output.dateFormat = "HH:mm"
         return output.string(from: date)
+    }
+
+    private func shortDateTime(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "--" }
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else { return value }
+        let output = DateFormatter()
+        output.dateFormat = "MM-dd HH:mm"
+        return output.string(from: date)
+    }
+
+    private func statusToolTip(snapshot: QuotaSnapshot?) -> String {
+        guard let snapshot else {
+            return "CodexQuotaBar\nQuota: --"
+        }
+        if !snapshot.ok {
+            return "CodexQuotaBar\nUnavailable: \(snapshot.error ?? "unknown error")"
+        }
+        return """
+        CodexQuotaBar
+        Quota: \(percentText(snapshot.displayedQuotaLeft))
+        Reset: \(shortDateTime(snapshot.displayedQuotaReset))
+        Last refresh: \(shortTime(snapshot.updatedAt))
+        """
     }
 
     private func isoNow() -> String {
@@ -726,6 +757,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.delegate = self
 
             let view = FloatingBallView(frame: NSRect(origin: .zero, size: size))
+            view.toolTipProvider = { [weak self] snapshot in
+                self?.statusToolTip(snapshot: snapshot) ?? "CodexQuotaBar"
+            }
             view.snapshot = latestSnapshot
             panel.contentView = view
 
@@ -811,8 +845,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 final class FloatingBallView: NSView {
+    var toolTipProvider: ((QuotaSnapshot?) -> String)?
+
     var snapshot: QuotaSnapshot? {
         didSet {
+            toolTip = toolTipProvider?(snapshot)
             needsDisplay = true
         }
     }
@@ -832,10 +869,8 @@ final class FloatingBallView: NSView {
         NSColor.black.withAlphaComponent(0.58).setFill()
         background.fill()
 
-        let five = snapshot?.fiveHourLeft
-        let seven = snapshot?.sevenDayLeft
-        drawRing(in: bounds.insetBy(dx: 7, dy: 7), percent: five, color: color(for: five), width: 4.5)
-        drawRing(in: bounds.insetBy(dx: 16, dy: 16), percent: seven, color: color(for: seven), width: 3.2)
+        let quota = snapshot?.displayedQuotaLeft
+        drawRing(in: bounds.insetBy(dx: 9, dy: 9), percent: quota, color: color(for: quota), width: 4.8)
     }
 
     private func drawRing(in rect: NSRect, percent: Int?, color: NSColor, width: CGFloat) {
