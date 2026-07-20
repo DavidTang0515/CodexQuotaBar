@@ -580,7 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func renderStatusImage(quota: Int?, loading: Bool, ok: Bool) -> NSImage {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
-        let size = NSSize(width: 96, height: 16)
+        let size = NSSize(width: 68, height: 16)
         let image = NSImage(size: size)
         image.lockFocus()
 
@@ -588,12 +588,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSColor.clear.setFill()
         rect.fill()
 
-        drawRow(label: "Quota", percent: quota, y: 3.8, loading: loading, ok: ok)
+        drawCompactRow(percent: quota, y: 3.8, loading: loading, ok: ok)
 
         image.unlockFocus()
         image.isTemplate = false
         image.size = NSSize(width: floor(size.width / scale * scale), height: size.height)
         return image
+    }
+
+    private func drawCompactRow(percent: Int?, y: CGFloat, loading: Bool, ok: Bool) {
+        let filled = barsFilled(percent)
+        let color = quotaColor(percent: percent, loading: loading, ok: ok)
+        for index in 0..<5 {
+            let x = CGFloat(index * 7)
+            let bar = NSBezierPath(roundedRect: NSRect(x: x, y: y + 1.4, width: 4.0, height: 7.2), xRadius: 2.0, yRadius: 2.0)
+            if index < filled {
+                color.setFill()
+            } else {
+                NSColor.systemBlue.withAlphaComponent(0.22).setFill()
+            }
+            bar.fill()
+        }
+
+        let percentAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 8.2, weight: .bold),
+            .foregroundColor: NSColor.white
+        ]
+        NSString(string: percentText(percent)).draw(at: NSPoint(x: 42, y: y), withAttributes: percentAttributes)
     }
 
     private func drawRow(label: String, percent: Int?, y: CGFloat, loading: Bool, ok: Bool) {
