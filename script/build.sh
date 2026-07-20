@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexQuotaBar"
-APP_VERSION="0.2.1"
+APP_VERSION="0.3.0"
 APP_BUNDLE="$ROOT_DIR/native/build/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
@@ -17,7 +17,8 @@ swiftc "$ROOT_DIR/native/CodexQuotaBar.swift" \
   -o "$APP_BINARY" \
   -framework AppKit \
   -framework Foundation \
-  -framework ServiceManagement
+  -framework ServiceManagement \
+  -lsqlite3
 
 cp "$ROOT_DIR/native/codex_quota.py" "$APP_RESOURCES/codex_quota.py"
 chmod +x "$APP_BINARY" "$APP_RESOURCES/codex_quota.py"
@@ -38,7 +39,7 @@ cat >"$INFO_PLIST" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>$APP_VERSION</string>
   <key>CFBundleVersion</key>
-  <string>3</string>
+  <string>4</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>

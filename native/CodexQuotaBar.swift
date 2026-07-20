@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SQLite3
 import ServiceManagement
 
 struct QuotaSnapshot: Decodable {
@@ -37,14 +38,302 @@ struct AppPreferences: Codable {
         }
     }
 
-    private static func supportDirectory() -> URL {
+    static func supportDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
         return base.appendingPathComponent("CodexQuotaBar", isDirectory: true)
     }
 
-    private static func fileURL() -> URL {
+    static func fileURL() -> URL {
         supportDirectory().appendingPathComponent("preferences.json")
+    }
+}
+
+struct QuotaHistoryEntry {
+    let capturedAt: String
+    let fiveHourLeft: Int?
+    let sevenDayLeft: Int?
+    let fiveHourReset: String?
+    let sevenDayReset: String?
+    let plan: String?
+    let source: String?
+}
+
+struct TrendMetric {
+    let currentRate: Double?
+    let previousRate: Double?
+}
+
+final class QuotaHistoryStore {
+    private enum TrendKind {
+        case fiveHour
+        case sevenDay
+    }
+
+    private let retention: TimeInterval = 30 * 24 * 60 * 60
+
+    private var fileURL: URL {
+        AppPreferences.supportDirectory().appendingPathComponent("history.sqlite")
+    }
+
+    func record(snapshot: QuotaSnapshot) {
+        guard snapshot.ok, snapshot.fiveHourLeft != nil || snapshot.sevenDayLeft != nil else {
+            return
+        }
+
+        let entry = QuotaHistoryEntry(
+            capturedAt: snapshot.updatedAt ?? isoString(Date()),
+            fiveHourLeft: snapshot.fiveHourLeft,
+            sevenDayLeft: snapshot.sevenDayLeft,
+            fiveHourReset: snapshot.fiveHourReset,
+            sevenDayReset: snapshot.sevenDayReset,
+            plan: snapshot.plan,
+            source: snapshot.source
+        )
+
+        do {
+            let db = try openDatabase()
+            defer { sqlite3_close(db) }
+            try insert(entry: entry, db: db)
+            try prune(db: db)
+        } catch {
+            // History is informational. Ignore write failures so live quota remains available.
+        }
+    }
+
+    func trends(now: Date = Date()) -> (fiveHour: TrendMetric, sevenDay: TrendMetric, projection: String) {
+        let entries = loadEntries()
+        let fiveHour = TrendMetric(
+            currentRate: rate(entries: entries, now: now, window: 60 * 60, offset: 0, kind: .fiveHour),
+            previousRate: rate(entries: entries, now: now, window: 60 * 60, offset: 60 * 60, kind: .fiveHour)
+        )
+        let sevenDay = TrendMetric(
+            currentRate: rate(entries: entries, now: now, window: 24 * 60 * 60, offset: 0, kind: .sevenDay),
+            previousRate: rate(entries: entries, now: now, window: 24 * 60 * 60, offset: 24 * 60 * 60, kind: .sevenDay)
+        )
+        return (fiveHour, sevenDay, projectedText(entries: entries, fiveHourRate: fiveHour.currentRate))
+    }
+
+    static func moveLocalDataToTrash() throws {
+        let manager = FileManager.default
+        for url in [
+            AppPreferences.fileURL(),
+            AppPreferences.supportDirectory().appendingPathComponent("history.sqlite"),
+            AppPreferences.supportDirectory().appendingPathComponent("quota-history.jsonl")
+        ] where manager.fileExists(atPath: url.path) {
+            var trashedURL: NSURL?
+            try manager.trashItem(at: url, resultingItemURL: &trashedURL)
+        }
+    }
+
+    private func loadEntries() -> [QuotaHistoryEntry] {
+        guard FileManager.default.fileExists(atPath: fileURL.path),
+              let db = try? openDatabase() else {
+            return []
+        }
+        defer { sqlite3_close(db) }
+
+        let sql = """
+        SELECT captured_at, five_hour_left, seven_day_left, five_hour_reset, seven_day_reset, plan, source
+        FROM quota_snapshots
+        ORDER BY captured_at ASC
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            return []
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var entries: [QuotaHistoryEntry] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            entries.append(
+                QuotaHistoryEntry(
+                    capturedAt: columnText(statement, 0) ?? "",
+                    fiveHourLeft: columnInt(statement, 1),
+                    sevenDayLeft: columnInt(statement, 2),
+                    fiveHourReset: columnText(statement, 3),
+                    sevenDayReset: columnText(statement, 4),
+                    plan: columnText(statement, 5),
+                    source: columnText(statement, 6)
+                )
+            )
+        }
+        return entries
+    }
+
+    private func openDatabase() throws -> OpaquePointer {
+        try FileManager.default.createDirectory(at: AppPreferences.supportDirectory(), withIntermediateDirectories: true)
+        var db: OpaquePointer?
+        guard sqlite3_open(fileURL.path, &db) == SQLITE_OK, let db else {
+            throw NSError(domain: "CodexQuotaBar", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not open history database."])
+        }
+        try exec(
+            db: db,
+            sql: """
+            CREATE TABLE IF NOT EXISTS quota_snapshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              captured_at TEXT NOT NULL,
+              five_hour_left INTEGER,
+              seven_day_left INTEGER,
+              five_hour_reset TEXT,
+              seven_day_reset TEXT,
+              plan TEXT,
+              source TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_quota_snapshots_captured_at
+            ON quota_snapshots(captured_at);
+            """
+        )
+        return db
+    }
+
+    private func insert(entry: QuotaHistoryEntry, db: OpaquePointer) throws {
+        let sql = """
+        INSERT INTO quota_snapshots
+        (captured_at, five_hour_left, seven_day_left, five_hour_reset, seven_day_reset, plan, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw sqliteError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bindText(statement, 1, entry.capturedAt)
+        bindInt(statement, 2, entry.fiveHourLeft)
+        bindInt(statement, 3, entry.sevenDayLeft)
+        bindText(statement, 4, entry.fiveHourReset)
+        bindText(statement, 5, entry.sevenDayReset)
+        bindText(statement, 6, entry.plan)
+        bindText(statement, 7, entry.source)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw sqliteError(db)
+        }
+    }
+
+    private func prune(db: OpaquePointer, now: Date = Date()) throws {
+        let cutoff = isoString(now.addingTimeInterval(-retention))
+        let sql = "DELETE FROM quota_snapshots WHERE captured_at < ?"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw sqliteError(db)
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, cutoff)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw sqliteError(db)
+        }
+    }
+
+    private func exec(db: OpaquePointer, sql: String) throws {
+        var errorMessage: UnsafeMutablePointer<Int8>?
+        guard sqlite3_exec(db, sql, nil, nil, &errorMessage) == SQLITE_OK else {
+            let message = errorMessage.map { String(cString: $0) } ?? "SQLite error."
+            sqlite3_free(errorMessage)
+            throw NSError(domain: "CodexQuotaBar", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
+    private func bindText(_ statement: OpaquePointer?, _ index: Int32, _ value: String?) {
+        guard let value else {
+            sqlite3_bind_null(statement, index)
+            return
+        }
+        sqlite3_bind_text(statement, index, value, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+    }
+
+    private func bindInt(_ statement: OpaquePointer?, _ index: Int32, _ value: Int?) {
+        guard let value else {
+            sqlite3_bind_null(statement, index)
+            return
+        }
+        sqlite3_bind_int(statement, index, Int32(value))
+    }
+
+    private func columnText(_ statement: OpaquePointer?, _ index: Int32) -> String? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+              let text = sqlite3_column_text(statement, index) else {
+            return nil
+        }
+        return String(cString: text)
+    }
+
+    private func columnInt(_ statement: OpaquePointer?, _ index: Int32) -> Int? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else {
+            return nil
+        }
+        return Int(sqlite3_column_int(statement, index))
+    }
+
+    private func sqliteError(_ db: OpaquePointer) -> NSError {
+        let message = sqlite3_errmsg(db).map { String(cString: $0) } ?? "SQLite error."
+        return NSError(domain: "CodexQuotaBar", code: 3, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func rate(entries: [QuotaHistoryEntry], now: Date, window: TimeInterval, offset: TimeInterval, kind: TrendKind) -> Double? {
+        let end = now.addingTimeInterval(-offset)
+        let start = end.addingTimeInterval(-window)
+        let samples = entries.compactMap { entry -> (date: Date, entry: QuotaHistoryEntry)? in
+            guard let entryDate = date(entry.capturedAt), entryDate >= start, entryDate <= end else {
+                return nil
+            }
+            return (entryDate, entry)
+        }
+
+        guard samples.count >= 2, let first = samples.first?.date, let last = samples.last?.date else {
+            return nil
+        }
+
+        var consumed = 0
+        for index in 1..<samples.count {
+            let previous = samples[index - 1].entry
+            let current = samples[index].entry
+            guard reset(previous, kind: kind) == reset(current, kind: kind),
+                  let previousLeft = left(previous, kind: kind),
+                  let currentLeft = left(current, kind: kind),
+                  currentLeft < previousLeft else {
+                continue
+            }
+            consumed += previousLeft - currentLeft
+        }
+
+        guard consumed > 0 else {
+            return nil
+        }
+
+        let elapsed = max(last.timeIntervalSince(first), 60)
+        let scale = kind == .fiveHour ? 3600.0 : 24 * 3600.0
+        return Double(consumed) / elapsed * scale
+    }
+
+    private func projectedText(entries: [QuotaHistoryEntry], fiveHourRate: Double?) -> String {
+        guard let latest = entries.last, let left = latest.fiveHourLeft, let rate = fiveHourRate, rate > 0 else {
+            return "Projected 5h: --"
+        }
+        let hours = Double(left) / rate
+        if hours < 1 {
+            return "Projected 5h: ~\(max(1, Int(round(hours * 60))))m"
+        }
+        let wholeHours = Int(hours)
+        let minutes = Int(round((hours - Double(wholeHours)) * 60))
+        return "Projected 5h: ~\(wholeHours)h \(minutes)m"
+    }
+
+    private func left(_ entry: QuotaHistoryEntry, kind: TrendKind) -> Int? {
+        kind == .fiveHour ? entry.fiveHourLeft : entry.sevenDayLeft
+    }
+
+    private func reset(_ entry: QuotaHistoryEntry, kind: TrendKind) -> String? {
+        kind == .fiveHour ? entry.fiveHourReset : entry.sevenDayReset
+    }
+
+    private func date(_ value: String) -> Date? {
+        ISO8601DateFormatter().date(from: value)
+    }
+
+    private func isoString(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 }
 
@@ -58,7 +347,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let sevenDayItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset: --", action: nil, keyEquivalent: "")
     private let updatedItem = NSMenuItem(title: "Last refresh: --", action: nil, keyEquivalent: "")
+    private let trendHeaderItem = NSMenuItem(title: "Usage trend", action: nil, keyEquivalent: "")
+    private let fiveHourTrendItem = NSMenuItem(title: "5h: --", action: nil, keyEquivalent: "")
+    private let sevenDayTrendItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
+    private let projectedItem = NSMenuItem(title: "Projected 5h: --", action: nil, keyEquivalent: "")
+    private let clearLocalDataItem = NSMenuItem(title: "Clear Local Data...", action: #selector(clearLocalData), keyEquivalent: "")
     private let stateItem = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
+    private let historyStore = QuotaHistoryStore()
     private var timer: Timer?
     private var retryTimer: Timer?
     private var isRefreshing = false
@@ -94,6 +389,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(resetItem)
         menu.addItem(updatedItem)
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(trendHeaderItem)
+        menu.addItem(fiveHourTrendItem)
+        menu.addItem(sevenDayTrendItem)
+        menu.addItem(projectedItem)
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(refreshItem)
         floatingBallItem.target = self
         menu.addItem(floatingBallItem)
@@ -106,6 +406,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(openChatGPT)
 
         menu.addItem(NSMenuItem.separator())
+        clearLocalDataItem.target = self
+        menu.addItem(clearLocalDataItem)
         let quit = NSMenuItem(title: "Quit CodexQuotaBar", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -226,6 +528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         if snapshot.ok {
             stateItem.title = "Live quota"
+            historyStore.record(snapshot: snapshot)
             retryTimer?.invalidate()
             retryTimer = nil
         } else {
@@ -237,6 +540,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sevenDayItem.title = "7d: \(percentText(snapshot.sevenDayLeft))"
         resetItem.title = "Reset: 5h \(shortTime(snapshot.fiveHourReset)) / 7d \(shortTime(snapshot.sevenDayReset))"
         updatedItem.title = "Last refresh: \(shortTime(snapshot.updatedAt))"
+        updateTrendItems()
+    }
+
+    private func updateTrendItems() {
+        let trends = historyStore.trends()
+        fiveHourTrendItem.title = "5h: \(rateText(trends.fiveHour.currentRate, unit: "h")) \(comparisonText(current: trends.fiveHour.currentRate, previous: trends.fiveHour.previousRate))"
+        sevenDayTrendItem.title = "7d: \(rateText(trends.sevenDay.currentRate, unit: "day")) \(comparisonText(current: trends.sevenDay.currentRate, previous: trends.sevenDay.previousRate))"
+        projectedItem.title = trends.projection
     }
 
     private func scheduleRetryIfNeeded() {
@@ -330,6 +641,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func percentText(_ value: Int?) -> String {
         guard let value else { return "--%" }
         return "\(max(0, min(100, value)))%"
+    }
+
+    private func rateText(_ value: Double?, unit: String) -> String {
+        guard let value else {
+            return "--"
+        }
+        return String(format: "-%.1f%% / %@", value, unit)
+    }
+
+    private func comparisonText(current: Double?, previous: Double?) -> String {
+        guard let current, let previous else {
+            return "vs prev --"
+        }
+        let delta = current - previous
+        if abs(delta) < 0.05 {
+            return "vs prev flat"
+        }
+        return String(format: "vs prev %@%.1f", delta > 0 ? "+" : "", delta)
     }
 
     private func shortTime(_ value: String?) -> String {
@@ -452,6 +781,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let enabled = SMAppService.mainApp.status == .enabled
         openAtLoginItem.state = enabled ? .on : .off
         openAtLoginItem.title = enabled ? "Open at Login: On" : "Open at Login: Off"
+    }
+
+    @objc private func clearLocalData() {
+        let alert = NSAlert()
+        alert.messageText = "Clear CodexQuotaBar local data?"
+        alert.informativeText = "This moves quota history and UI preferences to Trash. It does not touch ChatGPT, Codex CLI, ~/.codex, prompts, or projects."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        do {
+            try QuotaHistoryStore.moveLocalDataToTrash()
+            preferences = AppPreferences()
+            updateTrendItems()
+            stateItem.title = "Local CodexQuotaBar data moved to Trash."
+        } catch {
+            stateItem.title = "Could not clear local data: \(error.localizedDescription)"
+        }
     }
 
     @objc private func quit() {

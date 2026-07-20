@@ -52,14 +52,18 @@ Floating ball:
 - Refresh automatically every 5 minutes.
 - Show a small floating ball by default.
 - Remember floating ball visibility and position.
+- Record local quota history for trend estimates.
 - Provide a menu with:
   - Last refresh time
   - 5-hour reset time
   - 7-day reset time
+  - Recent quota usage trend
+  - Projected 5-hour quota duration
   - Manual refresh
   - Optional floating ball
   - Open at Login toggle
   - Open ChatGPT
+  - Clear Local Data
   - Quit
 
 ## Install From GitHub Releases
@@ -80,7 +84,8 @@ Uninstall:
 
 1. Quit CodexQuotaBar from the menu bar.
 2. Delete `/Applications/CodexQuotaBar.app`.
-3. Optional clean removal: delete `~/Library/Application Support/CodexQuotaBar/preferences.json`.
+3. Optional clean removal: use `Clear Local Data...` from the app menu before deleting the app,
+   or delete `~/Library/Application Support/CodexQuotaBar`.
 
 The release is ad-hoc signed and not notarized. It does not install a LaunchAgent, daemon, or auto-updater. Open at Login is optional and controlled from the app menu.
 
@@ -89,6 +94,7 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 - `v0.1.0` is the first public test release.
 - `v0.2.0` adds the floating ball, saved UI preferences, startup retry, and Open at Login.
 - `v0.2.1` restores quota access after the Codex desktop app moved into ChatGPT.
+- `v0.3.0` adds local quota history, usage trend estimates, and local data cleanup.
 
 ## Safety Boundaries
 
@@ -97,7 +103,9 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 - Do not scan unrelated project folders.
 - Do not store prompts or responses.
 - The Codex CLI may maintain its own runtime state under `~/.codex`.
-- Store only UI preferences in `~/Library/Application Support/CodexQuotaBar/preferences.json`.
+- Store UI preferences and quota history in `~/Library/Application Support/CodexQuotaBar`.
+- Quota history is stored in `history.sqlite` and contains only timestamps, remaining quota percentages, reset times, plan, and source.
+- Keep quota history local and prune it to the recent retention window.
 - Do not install a LaunchAgent.
 - Do not add auto-update.
 - Do not use batch-delete commands such as `rm -rf`.

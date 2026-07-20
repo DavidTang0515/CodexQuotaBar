@@ -37,14 +37,17 @@ How much Codex quota do I have left?
   - Manual refresh
   - Last refresh time
   - Reset time if available
+  - Recent quota usage trend
+  - Projected 5-hour quota duration
   - Show or hide the optional floating ball
   - Enable or disable Open at Login
   - Open ChatGPT
+  - Clear Local Data
   - Quit
 - Floating ball mode is optional and experimental.
 - Floating ball mode should be shown by default.
 - Floating ball visibility and position should be remembered.
-- Only UI preferences may be persisted.
+- UI preferences and quota history may be persisted locally.
 
 ## Deployment
 
@@ -66,9 +69,13 @@ How much Codex quota do I have left?
 - Do not scan unrelated folders.
 - Do not delete files or directories.
 - Do not use batch-delete commands such as `rm -rf`.
-- Do not create logs, histories, caches, or reports.
+- Do not create logs, caches, or reports.
 - UI preferences may be saved to `~/Library/Application Support/CodexQuotaBar/preferences.json`.
 - UI preferences may include floating ball visibility and position only.
+- Quota history may be saved to `~/Library/Application Support/CodexQuotaBar/history.sqlite`.
+- Quota history may include timestamps, remaining quota percentages, reset times, plan, and source only.
+- Quota history should be pruned to the recent retention window.
+- Users should be able to move local CodexQuotaBar data to Trash from the app menu.
 - Do not read browser cookies.
 - Do not read `~/.codex/auth.json`.
 - Do not store prompts or responses.
@@ -81,6 +88,7 @@ How much Codex quota do I have left?
 - Only request quota/rate-limit information.
 - Do not inspect conversation contents.
 - Do not inspect session file contents unless explicitly approved later.
+- Do not present quota percentage trends as exact token counts unless a future API returns real token usage.
 
 ## Latency And Refresh
 
@@ -98,7 +106,7 @@ How much Codex quota do I have left?
 - No auto-update.
 - No LaunchAgent.
 - No custom LaunchAgent login item.
-- No local database.
+- No local database beyond the app-owned quota history SQLite file.
 - No telemetry.
 - No analytics.
 - No cloud sync.
