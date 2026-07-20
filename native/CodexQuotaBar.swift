@@ -983,6 +983,11 @@ final class FloatingBallView: NSView {
 }
 
 final class HoverInfoView: NSView {
+    private static let font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .semibold)
+    private static let horizontalPadding: CGFloat = 12
+    private static let verticalPadding: CGFloat = 10
+    private static let lineHeight: CGFloat = 18
+
     private let text: String
 
     init(frame frameRect: NSRect, text: String) {
@@ -1003,25 +1008,30 @@ final class HoverInfoView: NSView {
         bubble.fill()
 
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 2
+        paragraph.minimumLineHeight = Self.lineHeight
+        paragraph.maximumLineHeight = Self.lineHeight
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
+            .font: Self.font,
             .foregroundColor: NSColor.white,
             .paragraphStyle: paragraph
         ]
-        NSString(string: text).draw(in: bounds.insetBy(dx: 10, dy: 8), withAttributes: attributes)
+        NSString(string: text).draw(in: bounds.insetBy(dx: Self.horizontalPadding, dy: Self.verticalPadding), withAttributes: attributes)
     }
 
     static func size(for text: String) -> NSSize {
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+            .font: Self.font
         ]
+        let lines = max(1, text.split(separator: "\n", omittingEmptySubsequences: false).count)
         let textSize = NSString(string: text).boundingRect(
-            with: NSSize(width: 260, height: 200),
+            with: NSSize(width: 320, height: 240),
             options: [.usesLineFragmentOrigin],
             attributes: attributes
         ).size
-        return NSSize(width: ceil(textSize.width) + 22, height: ceil(textSize.height) + 18)
+        return NSSize(
+            width: max(174, ceil(textSize.width) + Self.horizontalPadding * 2),
+            height: ceil(CGFloat(lines) * Self.lineHeight + Self.verticalPadding * 2)
+        )
     }
 }
 
