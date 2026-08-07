@@ -25,6 +25,55 @@ struct QuotaSnapshot: Decodable {
     }
 }
 
+struct UsageSnapshot: Decodable {
+    let schemaVersion: Int
+    let ok: Bool
+    let updatedAt: String?
+    let error: String?
+    let sourceStatus: UsageSourceStatus?
+    let pricingStatus: PricingStatus?
+    let ranges: [String: UsageRangeSnapshot]
+}
+
+struct UsageSourceStatus: Decodable {
+    let discoveredFiles: Int
+    let indexedFiles: Int
+    let changedFiles: Int
+    let errors: [String]
+}
+
+struct PricingStatus: Decodable {
+    let status: String?
+    let fetchedAt: String?
+    let errors: [String]
+}
+
+struct UsageRangeSnapshot: Decodable {
+    let inputTokens: Int64
+    let cachedInputTokens: Int64
+    let outputTokens: Int64
+    let reasoningTokens: Int64
+    let totalTokens: Int64
+    let pricedTokens: Int64
+    let unpricedTokens: Int64
+    let estimatedCostUSD: Double?
+    let models: [ModelUsageSnapshot]
+    let daily: [DailyUsageSnapshot]
+}
+
+struct ModelUsageSnapshot: Decodable {
+    let model: String
+    let totalTokens: Int64
+    let estimatedCostUSD: Double?
+    let priced: Bool
+}
+
+struct DailyUsageSnapshot: Decodable {
+    let date: String
+    let totalTokens: Int64
+    let estimatedCostUSD: Double
+}
+
 struct AppPreferences: Codable {
     var showFloatingBall: Bool = true
     var floatingBallX: Double?
@@ -126,13 +175,10 @@ final class QuotaHistoryStore {
 
     static func moveLocalDataToTrash() throws {
         let manager = FileManager.default
-        for url in [
-            AppPreferences.fileURL(),
-            AppPreferences.supportDirectory().appendingPathComponent("history.sqlite"),
-            AppPreferences.supportDirectory().appendingPathComponent("quota-history.jsonl")
-        ] where manager.fileExists(atPath: url.path) {
+        let directory = AppPreferences.supportDirectory()
+        if manager.fileExists(atPath: directory.path) {
             var trashedURL: NSURL?
-            try manager.trashItem(at: url, resultingItemURL: &trashedURL)
+            try manager.trashItem(at: directory, resultingItemURL: &trashedURL)
         }
     }
 
@@ -350,25 +396,26 @@ final class QuotaHistoryStore {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
+    private let openCockpitItem = NSMenuItem(title: "Open Codex Meter", action: #selector(showCockpit), keyEquivalent: "")
     private let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
     private let floatingBallItem = NSMenuItem(title: "Show Floating Ball", action: #selector(toggleFloatingBall), keyEquivalent: "b")
     private let openAtLoginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleOpenAtLogin), keyEquivalent: "l")
     private let currentQuotaItem = NSMenuItem(title: "Current quota: --", action: nil, keyEquivalent: "")
     private let resetItem = NSMenuItem(title: "Reset: --", action: nil, keyEquivalent: "")
     private let updatedItem = NSMenuItem(title: "Last refresh: --", action: nil, keyEquivalent: "")
-    private let trendHeaderItem = NSMenuItem(title: "Usage trend", action: nil, keyEquivalent: "")
-    private let currentTrendItem = NSMenuItem(title: "Quota: --", action: nil, keyEquivalent: "")
-    private let projectedItem = NSMenuItem(title: "Projected quota: --", action: nil, keyEquivalent: "")
     private let clearLocalDataItem = NSMenuItem(title: "Clear Local Data...", action: #selector(clearLocalData), keyEquivalent: "")
     private let stateItem = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
-    private let historyStore = QuotaHistoryStore()
     private var timer: Timer?
     private var retryTimer: Timer?
     private var isRefreshing = false
     private var latestSnapshot: QuotaSnapshot?
+    private var latestUsage: UsageSnapshot?
     private var floatingPanel: NSPanel?
     private var floatingView: FloatingBallView?
     private var preferences = AppPreferences.load()
+    private lazy var cockpitController = CockpitWindowController(
+        refreshHandler: { [weak self] in self?.refreshNow() }
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -377,9 +424,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if preferences.showFloatingBall {
             showFloatingBall()
         }
-        refreshNow()
+        refresh(includePriceRefresh: true)
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            self?.refreshNow()
+            self?.refresh(includePriceRefresh: false)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--ui-probe") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self else { return }
+                self.cockpitController.runUIProbe(anchor: self.statusItem.button) { samples in
+                    if let data = try? JSONSerialization.data(withJSONObject: samples, options: [.prettyPrinted, .sortedKeys]),
+                       let output = String(data: data, encoding: .utf8) {
+                        print(output)
+                        fflush(stdout)
+                    }
+                    NSMenu.setMenuBarVisible(true)
+                    NSApp.terminate(nil)
+                }
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("--preview") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.showCockpit()
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("--preview-detail") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.showCockpit()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                    self?.cockpitController.showDetailForPreview()
+                }
+            }
         }
     }
 
@@ -389,16 +461,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configureMenu() {
+        openCockpitItem.target = self
+        menu.addItem(openCockpitItem)
+        menu.addItem(NSMenuItem.separator())
         refreshItem.target = self
         menu.addItem(stateItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(currentQuotaItem)
         menu.addItem(resetItem)
         menu.addItem(updatedItem)
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(trendHeaderItem)
-        menu.addItem(currentTrendItem)
-        menu.addItem(projectedItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(refreshItem)
         floatingBallItem.target = self
@@ -418,11 +489,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         quit.target = self
         menu.addItem(quit)
 
-        statusItem.menu = menu
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusItemClicked)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem.button?.toolTip = "CodexQuotaBar"
     }
 
     @objc private func refreshNow() {
+        refresh(includePriceRefresh: true)
+    }
+
+    private func refresh(includePriceRefresh: Bool) {
         guard !isRefreshing else {
             return
         }
@@ -433,11 +510,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let snapshot = self?.readQuota()
+            let usage = self?.readUsage(refreshPrices: includePriceRefresh)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isRefreshing = false
                 self.refreshItem.isEnabled = true
                 self.apply(snapshot: snapshot)
+                self.apply(usage: usage)
             }
         }
     }
@@ -448,6 +527,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let source = URL(fileURLWithPath: #filePath)
         return source.deletingLastPathComponent().appendingPathComponent("codex_quota.py")
+    }
+
+    private func usageHelperURL() -> URL? {
+        if let resource = Bundle.main.url(forResource: "codex_usage", withExtension: "py") {
+            return resource
+        }
+        let source = URL(fileURLWithPath: #filePath)
+        return source.deletingLastPathComponent().appendingPathComponent("codex_usage.py")
+    }
+
+    private func readUsage(refreshPrices: Bool) -> UsageSnapshot? {
+        guard let helper = usageHelperURL() else {
+            return nil
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [helper.path] + (refreshPrices ? ["--refresh-prices"] : [])
+        process.environment = [
+            "HOME": NSHomeDirectory(),
+            "CODEX_HOME": NSHomeDirectory() + "/.codex",
+            "LOGNAME": NSUserName(),
+            "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "TMPDIR": NSTemporaryDirectory(),
+            "USER": NSUserName()
+        ]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            return try JSONDecoder().decode(UsageSnapshot.self, from: data)
+        } catch {
+            return nil
+        }
     }
 
     private func readQuota() -> QuotaSnapshot {
@@ -534,12 +649,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             currentQuotaItem.title = "Current quota: --"
             resetItem.title = "Reset: --"
             updatedItem.title = "Last refresh: --"
+            cockpitController.update(quota: nil, usage: latestUsage)
             return
         }
 
         if snapshot.ok {
             stateItem.title = "Live quota"
-            historyStore.record(snapshot: snapshot)
             retryTimer?.invalidate()
             retryTimer = nil
         } else {
@@ -550,13 +665,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         currentQuotaItem.title = "Current quota: \(percentText(snapshot.displayedQuotaLeft))"
         resetItem.title = "Reset: \(shortDateTime(snapshot.displayedQuotaReset))"
         updatedItem.title = "Last refresh: \(shortTime(snapshot.updatedAt))"
-        updateTrendItems()
+        cockpitController.update(quota: latestSnapshot, usage: latestUsage)
     }
 
-    private func updateTrendItems() {
-        let trends = historyStore.trends()
-        currentTrendItem.title = "Quota: \(rateText(trends.fiveHour.currentRate, unit: "h")) \(comparisonText(current: trends.fiveHour.currentRate, previous: trends.fiveHour.previousRate))"
-        projectedItem.title = trends.projection
+    private func apply(usage: UsageSnapshot?) {
+        latestUsage = usage
+        cockpitController.update(quota: latestSnapshot, usage: usage)
+        if latestSnapshot?.ok == true, usage?.ok == true {
+            stateItem.title = "Live quota · local usage"
+        } else if latestSnapshot?.ok == true {
+            stateItem.title = "Live quota · usage unavailable"
+        }
+    }
+
+    @objc private func statusItemClicked() {
+        guard let event = NSApp.currentEvent else {
+            showCockpit()
+            return
+        }
+        if event.type == .rightMouseUp {
+            if let button = statusItem.button {
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+            }
+        } else {
+            toggleCockpit()
+        }
+    }
+
+    @objc private func showCockpit() {
+        cockpitController.update(quota: latestSnapshot, usage: latestUsage)
+        cockpitController.show(anchor: statusItem.button)
+    }
+
+    private func toggleCockpit() {
+        if cockpitController.isVisible {
+            cockpitController.hide()
+        } else {
+            showCockpit()
+        }
     }
 
     private func scheduleRetryIfNeeded() {
@@ -565,7 +711,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         retryTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
             self?.retryTimer = nil
-            self?.refreshNow()
+            self?.refresh(includePriceRefresh: false)
         }
     }
 
@@ -782,6 +928,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             view.toolTipProvider = { [weak self] snapshot in
                 self?.statusToolTip(snapshot: snapshot) ?? "CodexQuotaBar"
             }
+            view.clickHandler = { [weak self] in
+                self?.showCockpit()
+            }
             view.snapshot = latestSnapshot
             panel.contentView = view
 
@@ -854,7 +1003,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             try QuotaHistoryStore.moveLocalDataToTrash()
             preferences = AppPreferences()
-            updateTrendItems()
+            latestUsage = nil
+            cockpitController.update(quota: latestSnapshot, usage: nil)
             stateItem.title = "Local CodexQuotaBar data moved to Trash."
         } catch {
             stateItem.title = "Could not clear local data: \(error.localizedDescription)"
@@ -868,6 +1018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 final class FloatingBallView: NSView {
     var toolTipProvider: ((QuotaSnapshot?) -> String)?
+    var clickHandler: (() -> Void)?
     private var hoverPanel: NSPanel?
 
     var snapshot: QuotaSnapshot? {
@@ -882,6 +1033,15 @@ final class FloatingBallView: NSView {
 
     override var mouseDownCanMoveWindow: Bool {
         true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let start = NSEvent.mouseLocation
+        window?.performDrag(with: event)
+        let end = NSEvent.mouseLocation
+        if hypot(end.x - start.x, end.y - start.y) < 4 {
+            clickHandler?()
+        }
     }
 
     override func updateTrackingAreas() {
@@ -1078,6 +1238,949 @@ final class HoverInfoView: NSView {
             width: max(174, ceil(textSize.width) + Self.horizontalPadding * 2),
             height: ceil(CGFloat(lines) * Self.lineHeight + Self.verticalPadding * 2)
         )
+    }
+}
+
+final class CockpitWindowController: NSObject, NSWindowDelegate {
+    private enum Mode {
+        case compact
+        case detail
+    }
+
+    private let compactSize = NSSize(width: 430, height: 232)
+    private let detailSize = NSSize(width: 430, height: 407)
+    private let refreshHandler: () -> Void
+    private var mode: Mode = .compact
+    private var selectedRange = "all"
+    private var quota: QuotaSnapshot?
+    private var usage: UsageSnapshot?
+    private var panel: NSPanel?
+    private var anchorTopCenter: NSPoint?
+    private var detailContainer: NSView?
+    private var detailHeightConstraint: NSLayoutConstraint?
+    private var detailButton: NSButton?
+    private var headerContainer: NSView?
+    private var summaryContainer: NSView?
+    private var trendContainer: NSView?
+    private var modelsContainer: NSView?
+    private var menuBarKeepAliveTimer: Timer?
+    private var globalClickMonitor: Any?
+    private var appResignObserver: NSObjectProtocol?
+    private var transitionGeneration = 0
+
+    init(refreshHandler: @escaping () -> Void) {
+        self.refreshHandler = refreshHandler
+    }
+
+    var isVisible: Bool {
+        panel?.isVisible == true
+    }
+
+    func update(quota: QuotaSnapshot?, usage: UsageSnapshot?) {
+        self.quota = quota
+        self.usage = usage
+        if isVisible {
+            render()
+        }
+    }
+
+    func showDetailForPreview() {
+        showDetail()
+    }
+
+    func show(anchor: NSStatusBarButton?) {
+        guard let anchor, let anchorPoint = anchorTopCenter(for: anchor) else { return }
+        let panel = ensurePanel()
+        anchorTopCenter = anchorPoint
+        render()
+        if !panel.isVisible {
+            startHoldingMenuBarVisible()
+            NSApp.activate(ignoringOtherApps: true)
+            let size = mode == .compact ? compactSize : detailSize
+            panel.setFrame(frame(size: size, below: anchorPoint), display: true)
+            panel.orderFrontRegardless()
+            startDismissMonitoring()
+        }
+    }
+
+    func hide() {
+        stopHoldingMenuBarVisible()
+        stopDismissMonitoring()
+        transitionGeneration += 1
+        mode = .compact
+        panel?.orderOut(nil)
+    }
+
+    func runUIProbe(anchor: NSStatusBarButton?, completion: @escaping ([[String: Any]]) -> Void) {
+        guard let anchor else {
+            completion([["error": "missing status item anchor"]])
+            return
+        }
+        show(anchor: anchor)
+        var samples: [[String: Any]] = []
+        func sample(_ stage: String) {
+            guard let panel else { return }
+            var row: [String: Any] = [
+                "stage": stage,
+                "menuBarVisible": NSMenu.menuBarVisible(),
+                "panelX": panel.frame.minX,
+                "panelTop": panel.frame.maxY,
+                "panelHeight": panel.frame.height,
+                "panelVisible": panel.isVisible,
+            ]
+            if let headerContainer {
+                let rect = panel.convertToScreen(headerContainer.convert(headerContainer.bounds, to: nil))
+                row["headerX"] = rect.minX
+                row["headerTop"] = rect.maxY
+            }
+            if let summaryContainer {
+                let rect = panel.convertToScreen(summaryContainer.convert(summaryContainer.bounds, to: nil))
+                row["summaryX"] = rect.minX
+                row["summaryTop"] = rect.maxY
+            }
+            row["detailHeight"] = detailHeightConstraint?.constant ?? -1
+            row["detailAlpha"] = detailContainer?.alphaValue ?? -1
+            if let trendContainer {
+                let rect = panel.convertToScreen(trendContainer.convert(trendContainer.bounds, to: nil))
+                row["trendTop"] = rect.maxY
+                row["trendHeight"] = rect.height
+            }
+            if let modelsContainer {
+                let rect = panel.convertToScreen(modelsContainer.convert(modelsContainer.bounds, to: nil))
+                row["modelsTop"] = rect.maxY
+                row["modelsHeight"] = rect.height
+            }
+            samples.append(row)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            sample("compact")
+            func stressMenuRestore(_ index: Int) {
+                guard index < 5 else {
+                    self.showDetail()
+                    for (sampleIndex, delay) in [0.02, 0.08, 0.16, 0.24, 0.36].enumerated() {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            sample("expand-\(sampleIndex)")
+                            if sampleIndex == 4 {
+                                self.showCompact()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+                                    sample("collapsed")
+                                    self.showDetail()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) {
+                                        sample("expanded-before-close")
+                                        self.hide()
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                            self.show(anchor: anchor)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                                sample("reopened")
+                                                guard let panel = self.panel else {
+                                                    completion(samples)
+                                                    return
+                                                }
+                                                self.dismissIfOutside(NSPoint(x: panel.frame.midX, y: panel.frame.midY))
+                                                sample("inside-click")
+                                                self.dismissIfOutside(NSPoint(x: panel.frame.minX - 20, y: panel.frame.minY - 20))
+                                                sample("outside-click")
+                                                completion(samples)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return
+                }
+                NSMenu.setMenuBarVisible(false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+                    sample("menu-restore-\(index)")
+                    stressMenuRestore(index + 1)
+                }
+            }
+            stressMenuRestore(0)
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        stopHoldingMenuBarVisible()
+    }
+
+    private func startHoldingMenuBarVisible() {
+        stopHoldingMenuBarVisible()
+        NSMenu.setMenuBarVisible(true)
+        let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] timer in
+            guard let self, self.panel?.isVisible == true else {
+                timer.invalidate()
+                return
+            }
+            if !NSMenu.menuBarVisible() {
+                NSMenu.setMenuBarVisible(true)
+            }
+        }
+        menuBarKeepAliveTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func stopHoldingMenuBarVisible() {
+        menuBarKeepAliveTimer?.invalidate()
+        menuBarKeepAliveTimer = nil
+    }
+
+    private func startDismissMonitoring() {
+        stopDismissMonitoring()
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            let location = NSEvent.mouseLocation
+            DispatchQueue.main.async {
+                self?.dismissIfOutside(location)
+            }
+        }
+        appResignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            self?.hide()
+        }
+    }
+
+    private func stopDismissMonitoring() {
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+            self.globalClickMonitor = nil
+        }
+        if let appResignObserver {
+            NotificationCenter.default.removeObserver(appResignObserver)
+            self.appResignObserver = nil
+        }
+    }
+
+    private func dismissIfOutside(_ location: NSPoint) {
+        guard let panel, panel.isVisible, !panel.frame.contains(location) else { return }
+        hide()
+    }
+
+    private func ensurePanel() -> NSPanel {
+        if let panel {
+            return panel
+        }
+        let created = NSPanel(
+            contentRect: NSRect(origin: .zero, size: compactSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        created.isFloatingPanel = true
+        created.becomesKeyOnlyIfNeeded = true
+        created.hidesOnDeactivate = false
+        created.isReleasedWhenClosed = false
+        created.isOpaque = false
+        created.backgroundColor = .clear
+        created.hasShadow = true
+        created.level = .popUpMenu
+        created.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        created.delegate = self
+        created.contentView = compactView()
+        panel = created
+        return created
+    }
+
+    private func render() {
+        guard let panel else { return }
+        panel.contentView = compactView()
+        guard let anchorTopCenter else { return }
+        let size = mode == .compact ? compactSize : detailSize
+        panel.setFrame(frame(size: size, below: anchorTopCenter), display: true)
+    }
+
+    private func transition(to nextMode: Mode) {
+        guard mode != nextMode,
+              let panel,
+              let anchorTopCenter,
+              let detailContainer,
+              let detailHeightConstraint else { return }
+        mode = nextMode
+        transitionGeneration += 1
+        let generation = transitionGeneration
+        let expanded = nextMode == .detail
+        let targetSize = expanded ? detailSize : compactSize
+        let targetFrame = frame(size: targetSize, below: anchorTopCenter)
+        detailButton?.title = expanded ? "收起详情" : "查看详情"
+        detailButton?.action = expanded ? #selector(showCompact) : #selector(showDetail)
+        let targetHeight: CGFloat = expanded ? 167 : 0
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if reduceMotion {
+            detailHeightConstraint.constant = targetHeight
+            detailContainer.alphaValue = expanded ? 1 : 0
+            panel.setFrame(targetFrame, display: true)
+            panel.contentView?.layoutSubtreeIfNeeded()
+            return
+        }
+        if expanded {
+            detailContainer.alphaValue = 0
+            detailHeightConstraint.constant = targetHeight
+            panel.contentView?.layoutSubtreeIfNeeded()
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(targetFrame, display: true)
+            }, completionHandler: { [weak self, weak detailContainer] in
+                guard let self, self.transitionGeneration == generation, self.mode == .detail, let detailContainer else { return }
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.12
+                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    detailContainer.animator().alphaValue = 1
+                }
+            })
+        } else {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.08
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                detailContainer.animator().alphaValue = 0
+            }, completionHandler: { [weak self, weak detailContainer] in
+                guard let self, self.transitionGeneration == generation, self.mode == .compact, let detailContainer else { return }
+                detailHeightConstraint.constant = 0
+                detailContainer.alphaValue = 0
+                panel.contentView?.layoutSubtreeIfNeeded()
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.20
+                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    panel.animator().setFrame(targetFrame, display: true)
+                }
+            })
+        }
+    }
+
+    private func anchorTopCenter(for anchor: NSStatusBarButton) -> NSPoint? {
+        guard let window = anchor.window else { return nil }
+        let screenRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        return NSPoint(x: screenRect.midX, y: screenRect.minY - 4)
+    }
+
+    private func frame(size: NSSize, below anchor: NSPoint) -> NSRect {
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(anchor) }) ?? NSScreen.main
+        let bounds = screen?.frame ?? NSRect(x: 0, y: 0, width: size.width, height: size.height)
+        let x = min(max(anchor.x - size.width / 2, bounds.minX + 8), bounds.maxX - size.width - 8)
+        let y = max(bounds.minY + 8, anchor.y - size.height)
+        return NSRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    private func compactView() -> NSView {
+        let root = backgroundView()
+        let stack = verticalStack(spacing: 8)
+        root.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
+        ])
+        let header = headerView(expanded: mode == .detail)
+        headerContainer = header
+        stack.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let cards = summaryCards()
+        summaryContainer = cards
+        stack.addArrangedSubview(cards)
+        cards.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let details = NSView()
+        details.translatesAutoresizingMaskIntoConstraints = false
+        let detailContent = detailContentView()
+        detailContent.translatesAutoresizingMaskIntoConstraints = false
+        details.addSubview(detailContent)
+        NSLayoutConstraint.activate([
+            detailContent.leadingAnchor.constraint(equalTo: details.leadingAnchor),
+            detailContent.trailingAnchor.constraint(equalTo: details.trailingAnchor),
+            detailContent.topAnchor.constraint(equalTo: details.topAnchor),
+            detailContent.heightAnchor.constraint(equalToConstant: 167),
+        ])
+        details.alphaValue = mode == .detail ? 1 : 0
+        details.wantsLayer = true
+        details.layer?.masksToBounds = true
+        stack.addArrangedSubview(details)
+        details.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let height = details.heightAnchor.constraint(equalToConstant: mode == .detail ? 167 : 0)
+        height.isActive = true
+        detailContainer = details
+        detailHeightConstraint = height
+        let footer = statusFooter()
+        stack.addArrangedSubview(footer)
+        footer.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return root
+    }
+
+    private func detailView() -> NSView {
+        let root = backgroundView()
+        let stack = verticalStack(spacing: 8)
+        root.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8),
+        ])
+        let header = headerView(expanded: true)
+        stack.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let cards = summaryCards()
+        stack.addArrangedSubview(cards)
+        cards.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let summary = usage?.ranges[selectedRange]
+        let lower = NSStackView()
+        lower.orientation = .horizontal
+        lower.spacing = 8
+        lower.distribution = .fill
+        let chartCard = CockpitPanelView()
+        let chartStack = verticalStack(spacing: 5)
+        chartCard.addSubview(chartStack)
+        NSLayoutConstraint.activate([
+            chartStack.leadingAnchor.constraint(equalTo: chartCard.leadingAnchor, constant: 10),
+            chartStack.trailingAnchor.constraint(equalTo: chartCard.trailingAnchor, constant: -10),
+            chartStack.topAnchor.constraint(equalTo: chartCard.topAnchor, constant: 9),
+            chartStack.bottomAnchor.constraint(equalTo: chartCard.bottomAnchor, constant: -9),
+        ])
+        let chartHeader = NSStackView()
+        chartHeader.orientation = .horizontal
+        chartHeader.addArrangedSubview(label("Token 趋势", size: 12, weight: .semibold))
+        chartHeader.addArrangedSubview(NSView())
+        chartHeader.addArrangedSubview(label(rangeTitle(selectedRange), size: 10, color: .secondaryLabelColor))
+        chartStack.addArrangedSubview(chartHeader)
+        chartHeader.widthAnchor.constraint(equalTo: chartStack.widthAnchor).isActive = true
+        let chart = UsageTrendView(points: summary?.daily ?? [])
+        chart.translatesAutoresizingMaskIntoConstraints = false
+        chart.heightAnchor.constraint(equalToConstant: 78).isActive = true
+        chartStack.addArrangedSubview(chart)
+        chartStack.addArrangedSubview(label(tokenComposition(summary), size: 10.5, color: .secondaryLabelColor))
+        chartCard.widthAnchor.constraint(equalToConstant: 250).isActive = true
+        lower.addArrangedSubview(chartCard)
+        let modelsCard = CockpitPanelView()
+        let modelsStack = verticalStack(spacing: 5)
+        modelsCard.addSubview(modelsStack)
+        NSLayoutConstraint.activate([
+            modelsStack.leadingAnchor.constraint(equalTo: modelsCard.leadingAnchor, constant: 9),
+            modelsStack.trailingAnchor.constraint(equalTo: modelsCard.trailingAnchor, constant: -9),
+            modelsStack.topAnchor.constraint(equalTo: modelsCard.topAnchor, constant: 9),
+            modelsStack.bottomAnchor.constraint(lessThanOrEqualTo: modelsCard.bottomAnchor, constant: -9),
+        ])
+        modelsStack.addArrangedSubview(label("模型构成", size: 12, weight: .semibold))
+        let topModels = Array((summary?.models ?? []).prefix(4))
+        if topModels.isEmpty {
+            modelsStack.addArrangedSubview(label("暂无 Token 数据", size: 10.5, color: .secondaryLabelColor))
+        } else {
+            for item in topModels {
+                modelsStack.addArrangedSubview(modelRow(item))
+            }
+        }
+        lower.addArrangedSubview(modelsCard)
+        stack.addArrangedSubview(lower)
+        lower.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let footer = statusFooter()
+        stack.addArrangedSubview(footer)
+        footer.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return root
+    }
+
+    private func headerView(expanded: Bool) -> NSView {
+        let header = NSStackView()
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 6
+        header.addArrangedSubview(label("Codex Meter", size: 14, weight: .semibold))
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 3.5
+        dot.layer?.backgroundColor = (quota?.ok == true ? NSColor.systemGreen : NSColor.systemOrange).cgColor
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([dot.widthAnchor.constraint(equalToConstant: 7), dot.heightAnchor.constraint(equalToConstant: 7)])
+        header.addArrangedSubview(dot)
+        header.addArrangedSubview(NSView())
+        let toggle = button(expanded ? "收起详情" : "查看详情", action: expanded ? #selector(showCompact) : #selector(showDetail))
+        detailButton = toggle
+        header.addArrangedSubview(toggle)
+        header.addArrangedSubview(button("刷新", action: #selector(refreshPressed)))
+        header.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        return header
+    }
+
+    private func summaryCards() -> NSView {
+        let summary = usage?.ranges[selectedRange]
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.distribution = .fillEqually
+        row.spacing = 8
+        row.addArrangedSubview(CockpitCardView(
+            title: "额度",
+            value: quotaValueText(),
+            subtitle: quotaResetText(),
+            accent: .systemTeal,
+            symbolName: "clock",
+            control: quotaRangeButton()
+        ))
+        row.addArrangedSubview(CockpitCardView(
+            title: "Codex Token",
+            value: formatTokens(summary?.totalTokens),
+            subtitle: tokenComposition(summary),
+            accent: .systemBlue,
+            symbolName: "chart.bar.xaxis",
+            control: usageRangeButton()
+        ))
+        row.addArrangedSubview(CockpitCardView(
+            title: "API 等价值",
+            value: formatCost(summary?.estimatedCostUSD),
+            subtitle: priceCoverage(summary),
+            accent: .systemOrange,
+            symbolName: "dollarsign.circle",
+            control: syncLabel()
+        ))
+        row.heightAnchor.constraint(equalToConstant: 128).isActive = true
+        return row
+    }
+
+    private func detailContentView() -> NSView {
+        let summary = usage?.ranges[selectedRange]
+        let lower = NSStackView()
+        lower.orientation = .horizontal
+        lower.spacing = 8
+        lower.distribution = .fill
+        lower.alignment = .top
+
+        let chartCard = CockpitPanelView()
+        let chartStack = verticalStack(spacing: 5)
+        chartCard.addSubview(chartStack)
+        NSLayoutConstraint.activate([
+            chartStack.leadingAnchor.constraint(equalTo: chartCard.leadingAnchor, constant: 10),
+            chartStack.trailingAnchor.constraint(equalTo: chartCard.trailingAnchor, constant: -10),
+            chartStack.topAnchor.constraint(equalTo: chartCard.topAnchor, constant: 9),
+            chartStack.bottomAnchor.constraint(equalTo: chartCard.bottomAnchor, constant: -9),
+        ])
+        let chartHeader = NSStackView()
+        chartHeader.orientation = .horizontal
+        chartHeader.addArrangedSubview(label("Token 趋势", size: 12, weight: .semibold))
+        chartHeader.addArrangedSubview(NSView())
+        chartHeader.addArrangedSubview(label(rangeTitle(selectedRange), size: 10, color: .secondaryLabelColor))
+        chartStack.addArrangedSubview(chartHeader)
+        chartHeader.widthAnchor.constraint(equalTo: chartStack.widthAnchor).isActive = true
+        let chart = UsageTrendView(points: summary?.daily ?? [])
+        chart.translatesAutoresizingMaskIntoConstraints = false
+        chart.heightAnchor.constraint(equalToConstant: 72).isActive = true
+        chartStack.addArrangedSubview(chart)
+        let stats = NSStackView()
+        stats.orientation = .horizontal
+        stats.distribution = .fillEqually
+        stats.spacing = 5
+        stats.addArrangedSubview(detailStat(title: "输入", value: formatTokens(summary?.inputTokens)))
+        stats.addArrangedSubview(detailStat(title: "缓存", value: formatTokens(summary?.cachedInputTokens)))
+        stats.addArrangedSubview(detailStat(title: "输出", value: formatTokens(summary?.outputTokens)))
+        chartStack.addArrangedSubview(stats)
+        stats.widthAnchor.constraint(equalTo: chartStack.widthAnchor).isActive = true
+        chartCard.widthAnchor.constraint(equalToConstant: 250).isActive = true
+        trendContainer = chartCard
+        lower.addArrangedSubview(chartCard)
+        chartCard.heightAnchor.constraint(equalTo: lower.heightAnchor).isActive = true
+
+        let modelsCard = CockpitPanelView()
+        let modelsStack = verticalStack(spacing: 4)
+        modelsCard.addSubview(modelsStack)
+        NSLayoutConstraint.activate([
+            modelsStack.leadingAnchor.constraint(equalTo: modelsCard.leadingAnchor, constant: 9),
+            modelsStack.trailingAnchor.constraint(equalTo: modelsCard.trailingAnchor, constant: -9),
+            modelsStack.topAnchor.constraint(equalTo: modelsCard.topAnchor, constant: 9),
+            modelsStack.bottomAnchor.constraint(lessThanOrEqualTo: modelsCard.bottomAnchor, constant: -9),
+        ])
+        let modelsHeader = NSStackView()
+        modelsHeader.orientation = .horizontal
+        modelsHeader.addArrangedSubview(label("模型构成", size: 12, weight: .semibold))
+        modelsHeader.addArrangedSubview(NSView())
+        modelsHeader.addArrangedSubview(label("Top 4", size: 9.5, color: .secondaryLabelColor))
+        modelsStack.addArrangedSubview(modelsHeader)
+        modelsHeader.widthAnchor.constraint(equalTo: modelsStack.widthAnchor).isActive = true
+        let topModels = Array((summary?.models ?? []).prefix(4))
+        let maximum = topModels.map(\.totalTokens).max() ?? 0
+        if topModels.isEmpty {
+            modelsStack.addArrangedSubview(label("暂无 Token 数据", size: 10.5, color: .secondaryLabelColor))
+        } else {
+            for item in topModels {
+                modelsStack.addArrangedSubview(modelRow(item, maximum: maximum))
+            }
+        }
+        modelsContainer = modelsCard
+        lower.addArrangedSubview(modelsCard)
+        modelsCard.heightAnchor.constraint(equalTo: lower.heightAnchor).isActive = true
+        return lower
+    }
+
+    private func detailStat(title: String, value: String) -> NSView {
+        let panel = NSView()
+        panel.wantsLayer = true
+        panel.layer?.cornerRadius = 7
+        panel.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.34).cgColor
+        let stack = verticalStack(spacing: 1)
+        panel.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 6),
+            stack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -4),
+            stack.topAnchor.constraint(equalTo: panel.topAnchor, constant: 4),
+            stack.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -4),
+        ])
+        stack.addArrangedSubview(label(title, size: 9, color: .secondaryLabelColor))
+        stack.addArrangedSubview(label(value, size: 10.5, weight: .semibold))
+        return panel
+    }
+
+    private func statusFooter() -> NSView {
+        let footer = NSStackView()
+        footer.orientation = .horizontal
+        footer.alignment = .centerY
+        footer.addArrangedSubview(label(usageStatusText(), size: 10.5, color: .secondaryLabelColor))
+        footer.addArrangedSubview(NSView())
+        footer.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        return footer
+    }
+
+    private func backgroundView() -> NSView {
+        let effect = CockpitBackdropView()
+        effect.translatesAutoresizingMaskIntoConstraints = false
+        return effect
+    }
+
+    private func verticalStack(spacing: CGFloat) -> NSStackView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = spacing
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
+    private func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = NSFont.systemFont(ofSize: size, weight: weight)
+        field.textColor = color
+        field.lineBreakMode = .byTruncatingTail
+        return field
+    }
+
+    private func button(_ title: String, action: Selector) -> NSButton {
+        let value = NSButton(title: title, target: self, action: action)
+        value.bezelStyle = .rounded
+        value.controlSize = .small
+        return value
+    }
+
+    private func quotaRangeButton() -> NSView {
+        return label("7 天", size: 10, weight: .medium, color: .secondaryLabelColor)
+    }
+
+    private func usageRangeButton() -> NSView {
+        let control = NSPopUpButton()
+        control.addItems(withTitles: ["今天", "7 天", "30 天", "本月", "全部"])
+        let keys = ["today", "7d", "30d", "month", "all"]
+        control.selectItem(at: keys.firstIndex(of: selectedRange) ?? 4)
+        control.target = self
+        control.action = #selector(usageRangeChanged(_:))
+        control.controlSize = .mini
+        return control
+    }
+
+    private func syncLabel() -> NSView {
+        let value = label("同步", size: 10, weight: .medium, color: .secondaryLabelColor)
+        value.alignment = .center
+        return value
+    }
+
+    private func quotaValueText() -> String {
+        let value = quota?.sevenDayLeft ?? quota?.currentQuotaLeft
+        return value.map { "\($0)%" } ?? "--%"
+    }
+
+    private func quotaResetText() -> String {
+        let value = quota?.sevenDayReset ?? quota?.currentQuotaReset
+        return value == nil ? "等待额度数据" : "重置 \(shortDateTime(value))"
+    }
+
+    private func rangeTitle(_ key: String) -> String {
+        ["today": "今天", "7d": "7 天", "30d": "30 天", "month": "本月", "all": "全部"][key] ?? "全部"
+    }
+
+    private func modelRow(_ item: ModelUsageSnapshot) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        let name = label(item.model, size: 10, weight: .medium)
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        row.addArrangedSubview(name)
+        row.addArrangedSubview(NSView())
+        let detail = item.priced
+            ? "\(formatTokens(item.totalTokens))  \(formatCost(item.estimatedCostUSD))"
+            : "\(formatTokens(item.totalTokens))  未计价"
+        row.addArrangedSubview(label(detail, size: 9.5, color: item.priced ? .secondaryLabelColor : .systemOrange))
+        return row
+    }
+
+    private func modelRow(_ item: ModelUsageSnapshot, maximum: Int64) -> NSView {
+        let stack = verticalStack(spacing: 2)
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        let name = label(item.model, size: 9.5, weight: .medium)
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        row.addArrangedSubview(name)
+        row.addArrangedSubview(NSView())
+        row.addArrangedSubview(label(formatTokens(item.totalTokens), size: 9.2, color: .secondaryLabelColor))
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        let track = NSView()
+        track.wantsLayer = true
+        track.layer?.cornerRadius = 1.5
+        track.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.22).cgColor
+        track.translatesAutoresizingMaskIntoConstraints = false
+        let fill = NSView()
+        fill.wantsLayer = true
+        fill.layer?.cornerRadius = 1.5
+        fill.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        fill.translatesAutoresizingMaskIntoConstraints = false
+        track.addSubview(fill)
+        let fraction = maximum > 0 ? min(1, CGFloat(item.totalTokens) / CGFloat(maximum)) : 0
+        NSLayoutConstraint.activate([
+            track.heightAnchor.constraint(equalToConstant: 3),
+            fill.leadingAnchor.constraint(equalTo: track.leadingAnchor),
+            fill.topAnchor.constraint(equalTo: track.topAnchor),
+            fill.bottomAnchor.constraint(equalTo: track.bottomAnchor),
+            fill.widthAnchor.constraint(equalTo: track.widthAnchor, multiplier: fraction),
+        ])
+        stack.addArrangedSubview(track)
+        track.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    private func tokenComposition(_ value: UsageRangeSnapshot?) -> String {
+        guard let value else { return "等待本机数据" }
+        return "输入 \(formatTokens(value.inputTokens)) · 输出 \(formatTokens(value.outputTokens))"
+    }
+
+    private func priceCoverage(_ value: UsageRangeSnapshot?) -> String {
+        guard let value else { return "官方 API 标准价估算" }
+        if value.unpricedTokens > 0 {
+            return "\(formatTokens(value.unpricedTokens)) 未计价"
+        }
+        return "官方 API 标准价估算"
+    }
+
+    private func usageStatusText() -> String {
+        guard let usage else { return "正在读取本机 Token 数据…" }
+        if !usage.ok {
+            return "Token 数据不可用：\(usage.error ?? "未知错误")"
+        }
+        let files = usage.sourceStatus?.indexedFiles ?? 0
+        let priceState: String
+        switch usage.pricingStatus?.status {
+        case "live": priceState = "价格已从 OpenAI 更新"
+        case "partial": priceState = "部分价格已更新"
+        case "cached": priceState = "使用上次价格"
+        default: priceState = "使用内置官方价格"
+        }
+        return "仅扫描本机 \(files) 个日志文件 · \(priceState) · \(shortTime(usage.updatedAt))"
+    }
+
+    private func formatTokens(_ value: Int64?) -> String {
+        guard let value else { return "--" }
+        let number = Double(value)
+        if number >= 1_000_000_000 { return String(format: "%.2fB", number / 1_000_000_000) }
+        if number >= 1_000_000 { return String(format: "%.1fM", number / 1_000_000) }
+        if number >= 1_000 { return String(format: "%.1fK", number / 1_000) }
+        return "\(value)"
+    }
+
+    private func formatCost(_ value: Double?) -> String {
+        guard let value else { return "$--" }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        formatter.currencySymbol = "$"
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: value)) ?? String(format: "$%.2f", value)
+    }
+
+    private func shortTime(_ value: String?) -> String {
+        guard let value, let date = isoDate(value) else { return "--" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func shortDateTime(_ value: String?) -> String {
+        guard let value, let date = isoDate(value) else { return "--" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func isoDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+
+    @objc private func refreshPressed() {
+        refreshHandler()
+    }
+
+    @objc private func showDetail() {
+        transition(to: .detail)
+    }
+
+    @objc private func showCompact() {
+        transition(to: .compact)
+    }
+
+    @objc private func usageRangeChanged(_ sender: NSPopUpButton) {
+        let keys = ["today", "7d", "30d", "month", "all"]
+        guard sender.indexOfSelectedItem >= 0, sender.indexOfSelectedItem < keys.count else { return }
+        selectedRange = keys[sender.indexOfSelectedItem]
+        render()
+    }
+}
+
+final class CockpitBackdropView: NSVisualEffectView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        material = .popover
+        blendingMode = .withinWindow
+        state = .active
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let colors: [NSColor] = [
+            NSColor.systemBlue.withAlphaComponent(0.10),
+            NSColor.systemPurple.withAlphaComponent(0.07),
+            NSColor.white.withAlphaComponent(0.04),
+        ]
+        NSGradient(colors: colors)?.draw(in: bounds, angle: -35)
+    }
+}
+
+class CockpitPanelView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.44).cgColor
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.42).cgColor
+        layer?.borderWidth = 1
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.08
+        layer?.shadowRadius = 8
+        layer?.shadowOffset = NSSize(width: 0, height: -2)
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+}
+
+final class CockpitCardView: CockpitPanelView {
+    init(title: String, value: String, subtitle: String, accent: NSColor, symbolName: String, control: NSView) {
+        super.init(frame: .zero)
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 124),
+        ])
+
+        let top = NSStackView()
+        top.orientation = .horizontal
+        top.alignment = .centerY
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+            ?? NSImage(systemSymbolName: "circle", accessibilityDescription: title)
+        icon.contentTintColor = accent
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([icon.widthAnchor.constraint(equalToConstant: 22), icon.heightAnchor.constraint(equalToConstant: 22)])
+        top.addArrangedSubview(icon)
+        top.addArrangedSubview(NSView())
+        top.addArrangedSubview(control)
+        stack.addArrangedSubview(top)
+        top.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        let heading = NSTextField(labelWithString: title)
+        heading.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        heading.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(heading)
+        let amount = NSTextField(labelWithString: value)
+        amount.font = NSFont.monospacedDigitSystemFont(ofSize: 23, weight: .bold)
+        amount.textColor = .labelColor
+        amount.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        stack.addArrangedSubview(amount)
+        let detail = NSTextField(labelWithString: subtitle)
+        detail.font = NSFont.systemFont(ofSize: 10.5)
+        detail.textColor = .secondaryLabelColor
+        detail.lineBreakMode = .byTruncatingTail
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        stack.addArrangedSubview(detail)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+}
+
+final class UsageTrendView: NSView {
+    private let points: [DailyUsageSnapshot]
+
+    init(points: [DailyUsageSnapshot]) {
+        self.points = points
+        super.init(frame: .zero)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let plot = bounds.insetBy(dx: 8, dy: 20)
+        NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
+        let baseline = NSBezierPath()
+        baseline.move(to: NSPoint(x: plot.minX, y: plot.minY))
+        baseline.line(to: NSPoint(x: plot.maxX, y: plot.minY))
+        baseline.stroke()
+
+        guard !points.isEmpty, let maximum = points.map(\.totalTokens).max(), maximum > 0 else {
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 12),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+            NSString(string: "暂无趋势数据").draw(at: NSPoint(x: plot.midX - 38, y: plot.midY), withAttributes: attributes)
+            return
+        }
+
+        let path = NSBezierPath()
+        for (index, point) in points.enumerated() {
+            let fraction = points.count == 1 ? 0.5 : CGFloat(index) / CGFloat(points.count - 1)
+            let x = plot.minX + plot.width * fraction
+            let y = plot.minY + plot.height * CGFloat(Double(point.totalTokens) / Double(maximum))
+            if index == 0 { path.move(to: NSPoint(x: x, y: y)) }
+            else { path.line(to: NSPoint(x: x, y: y)) }
+        }
+        path.lineWidth = 2.5
+        path.lineJoinStyle = .round
+        NSColor.systemTeal.setStroke()
+        path.stroke()
     }
 }
 
