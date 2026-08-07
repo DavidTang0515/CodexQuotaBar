@@ -34,7 +34,7 @@ The two branches are shown side by side so their status bar behavior remains eas
   </tr>
   <tr>
     <td align="center"><img src="docs/assets/status-bar-preview-5h-7d.png" alt="main branch status bar with 5-hour and 7-day quota" width="160"></td>
-    <td align="center"><img src="docs/assets/status-bar-preview-7d.png" alt="7-day-only status bar with green signal bars and 72 percent" width="160"></td>
+    <td align="center"><img src="docs/assets/status-bar-preview-7d.png" alt="7-day-only status bar with green signal bars and 69 percent" width="160"></td>
   </tr>
 </table>
 
