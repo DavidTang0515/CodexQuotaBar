@@ -1,30 +1,46 @@
 # Roadmap
 
-## v0.4.0-temp — Real-data cockpit
+## Phase 1: Proof of Concept
 
-- Index active and archived local Codex token metadata.
-- Delta-normalize cumulative token snapshots.
-- Estimate API value with official model prices and preserve unpriced tokens.
-- Add one compact native `NSPanel` that expands vertically into a restrained detail view and returns in place.
-- Support Today, 7 days, 30 days, Current month, and All.
-- Keep the single 7-day menu bar indicator and optional floating ball.
+- Confirm local Codex CLI or app bundle path.
+- Build a helper that reads `account/rateLimits/read` from the local Codex app-server.
+- Return normalized JSON with:
+  - `fiveHourLeft`
+  - `sevenDayLeft`
+  - `fiveHourReset`
+  - `sevenDayReset`
+  - `updatedAt`
+- Print the result from the command line for inspection.
 
-## v0.4.1-temp — Reliability pass
+## Phase 2: Minimal Menu Bar App
 
-- Validate changed, truncated, archived, and removed session files.
-- Improve partial-data diagnostics and price-source visibility.
-- Benchmark first scan and incremental refresh on large histories.
-- Complete local-data cleanup, packaging, and uninstall verification.
+- Create a native macOS status bar app with Swift and AppKit.
+- Render two compact rows:
+  - `5h`
+  - `7d`
+- Draw 5 equal-height quota bars per row.
+- Treat each bar as about 20% quota.
+- Keep the bars close to the percentage text.
+- Show percentage text at the right side.
+- Add menu actions:
+  - Refresh
+  - Open ChatGPT
+  - Quit
 
-## v0.5.0 — Mainline decision
+## Phase 3: Visual Polish
 
-- Collect visual and data feedback from the 7-day branch.
-- Decide which cockpit capabilities should be ported to `main` without restoring 5-hour UI in this branch.
-- Add export/import only if a concrete migration need is confirmed.
+- Match the compact blue status block style.
+- Tune spacing for macOS menu bar height.
+- Use green, orange, and red states.
+- Do not add a right-side Codex icon; the reference image captured the native Codex icon by accident.
 
-## Explicit Non-Goals
+## Not In First Version
 
-- Project, conversation, tool, or skill leaderboards.
-- Cloud sync, telemetry, account billing APIs, or invoice claims.
-- Hardware monitoring, auto-update, LaunchAgent, or background daemon.
-- Direct dependency on codexU caches or databases.
+- Auto-update.
+- LaunchAgent.
+- SSD temperature.
+- CPU or RAM display.
+- Persistent logs.
+- Local history database.
+- Complex theme system.
+- Installer that writes into `/Applications`.

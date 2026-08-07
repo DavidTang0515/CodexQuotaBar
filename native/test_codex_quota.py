@@ -44,23 +44,17 @@ class NormalizeTests(unittest.TestCase):
         snapshot = codex_quota.normalize(
             {
                 "planType": "plus",
-                "primary": {"usedPercent": 81, "resetsAt": 1_800_000_000, "windowDurationMins": 300},
-                "secondary": {"usedPercent": 13, "resetsAt": 1_900_000_000, "windowDurationMins": 10_080},
+                "primary": {"usedPercent": 81, "resetsAt": 1_800_000_000},
+                "secondary": {"usedPercent": 13, "resetsAt": 1_900_000_000},
             }
         )
 
         self.assertTrue(snapshot["ok"])
         self.assertEqual(snapshot["plan"], "plus")
-        self.assertEqual(snapshot["currentQuotaLeft"], 87)
+        self.assertEqual(snapshot["currentQuotaLeft"], 19)
         self.assertEqual(snapshot["fiveHourLeft"], 19)
-        self.assertEqual(snapshot["currentQuotaReset"], "2030-03-17T17:46:40Z")
+        self.assertEqual(snapshot["currentQuotaReset"], "2027-01-15T08:00:00Z")
         self.assertEqual(snapshot["sevenDayLeft"], 87)
-
-    def test_uses_only_primary_when_it_is_the_single_window(self):
-        snapshot = codex_quota.normalize(
-            {"primary": {"usedPercent": 24, "windowDurationMins": 10_080}}
-        )
-        self.assertEqual(snapshot["currentQuotaLeft"], 76)
 
 
 if __name__ == "__main__":

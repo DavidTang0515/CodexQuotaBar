@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexQuotaBar"
-VERSION="0.4.0-temp"
+VERSION="0.3.1-temp"
 APP_BUNDLE="$ROOT_DIR/native/build/$APP_NAME.app"
 RELEASE_DIR="$ROOT_DIR/release"
 STAGE_DIR="$RELEASE_DIR/dmg-stage-$VERSION"
@@ -46,9 +46,8 @@ Privacy:
 - Does not store prompts or responses.
 - Does not install a LaunchAgent, daemon, or auto-updater.
 - Open at Login is optional and controlled from the app menu.
-- Reads structural token metadata from local active and archived Codex session files.
-- Stores only app preferences, derived token deltas/file signatures, quota history, and the last official price table under ~/Library/Application Support/CodexQuotaBar.
-- Does not store prompts, responses, raw session copies, credentials, or browser data.
+- Stores UI preferences and local quota history under ~/Library/Application Support/CodexQuotaBar.
+- Quota history is stored in history.sqlite and contains timestamps, remaining quota percentages, reset times, plan, and source only.
 README
 
 cp "$STAGE_DIR/README-INSTALL.txt" "$INSTALL_README"

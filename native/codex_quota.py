@@ -13,7 +13,7 @@ import time
 
 
 TIMEOUT_SECONDS = 10
-CLIENT_INFO = {"name": "codex-quota-bar", "title": "CodexQuotaBar", "version": "0.4.0-temp"}
+CLIENT_INFO = {"name": "codex-quota-bar", "title": "CodexQuotaBar", "version": "0.3.1-temp"}
 
 
 class QuotaError(Exception):
@@ -148,18 +148,13 @@ def normalize_time(value) -> str | None:
 def normalize(bucket: dict) -> dict:
     primary = normalize_window(bucket.get("primary"))
     secondary = normalize_window(bucket.get("secondary"))
-    windows = [window for window in (primary, secondary) if window]
-    current = next(
-        (window for window in windows if window.get("windowMinutes") == 7 * 24 * 60),
-        secondary or primary,
-    )
     return {
-        "ok": bool(current),
+        "ok": bool(primary or secondary),
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source": "codex_app_server",
         "plan": pick(bucket, "planType", "plan_type", "plan"),
-        "currentQuotaLeft": current.get("leftPercent") if current else None,
-        "currentQuotaReset": current.get("resetsAt") if current else None,
+        "currentQuotaLeft": primary.get("leftPercent") if primary else None,
+        "currentQuotaReset": primary.get("resetsAt") if primary else None,
         "fiveHourLeft": primary.get("leftPercent") if primary else None,
         "sevenDayLeft": secondary.get("leftPercent") if secondary else None,
         "fiveHourReset": primary.get("resetsAt") if primary else None,

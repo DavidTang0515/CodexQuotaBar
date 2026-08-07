@@ -3,20 +3,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexQuotaBar"
-APP_VERSION="0.4.0-temp"
+APP_VERSION="0.3.1-temp"
 APP_BUNDLE="$ROOT_DIR/native/build/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
-MODULE_CACHE_DIR="$ROOT_DIR/native/build/module-cache"
 
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
-mkdir -p "$MODULE_CACHE_DIR"
 
 swiftc "$ROOT_DIR/native/CodexQuotaBar.swift" \
-  -module-cache-path "$MODULE_CACHE_DIR" \
   -o "$APP_BINARY" \
   -framework AppKit \
   -framework Foundation \
@@ -24,8 +21,7 @@ swiftc "$ROOT_DIR/native/CodexQuotaBar.swift" \
   -lsqlite3
 
 cp "$ROOT_DIR/native/codex_quota.py" "$APP_RESOURCES/codex_quota.py"
-cp "$ROOT_DIR/native/codex_usage.py" "$APP_RESOURCES/codex_usage.py"
-chmod +x "$APP_BINARY" "$APP_RESOURCES/codex_quota.py" "$APP_RESOURCES/codex_usage.py"
+chmod +x "$APP_BINARY" "$APP_RESOURCES/codex_quota.py"
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -43,7 +39,7 @@ cat >"$INFO_PLIST" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>$APP_VERSION</string>
   <key>CFBundleVersion</key>
-  <string>6</string>
+  <string>5</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>
