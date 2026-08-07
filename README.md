@@ -1,10 +1,17 @@
 # CodexQuotaBar
 
-CodexQuotaBar is a small, local-first macOS menu bar app for showing Codex 7-day quota, local token usage, and estimated API-equivalent value at a glance.
+CodexQuotaBar is a small, local-first macOS menu bar app for showing Codex quota, local token usage, and estimated API-equivalent value at a glance.
+
+The project maintains two intentionally parallel variants:
+
+- `main`: the formal 5h + 7d quota version.
+- `temp/no-5h-limit-hover`: the 7d-only cockpit variant.
+
+This README labels branch-specific behavior explicitly. The 7d-only variant is maintained alongside `main`, not presented as a replacement for it.
 
 ## Goal
 
-Keep one readable 7-day quota indicator in the macOS status bar. Click it to open a compact native `NSPanel`, then expand that same panel vertically for detailed statistics.
+Keep the quota indicator readable in both maintained variants. In the 7d-only variant, click the status bar indicator to open a compact native `NSPanel`, then expand that same panel vertically for detailed statistics.
 
 The app is lightweight, local-first, and easy to inspect.
 
@@ -12,7 +19,28 @@ See [REQUIREMENTS.md](REQUIREMENTS.md) for the current product requirements and 
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
-## Actual Preview
+## Maintained Variants
+
+The two branches are shown side by side so their status bar behavior remains easy to distinguish:
+
+<table>
+  <tr>
+    <th>Formal 5h + 7d variant</th>
+    <th>7d-only cockpit variant</th>
+  </tr>
+  <tr>
+    <td><code>main</code> · 5h + 7d</td>
+    <td><code>temp/no-5h-limit-hover</code> · 7d only</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/status-bar-preview-5h-7d.png" alt="main branch status bar with 5-hour and 7-day quota" width="160"></td>
+    <td align="center"><img src="docs/assets/status-bar-preview-7d.png" alt="7-day-only status bar with green signal bars and 72 percent" width="160"></td>
+  </tr>
+</table>
+
+## 7d-only Variant Preview
+
+The cockpit images below are from `temp/no-5h-limit-hover` and document its current 7d-only behavior.
 
 <p align="center">
   <img src="assets/readme/hero.svg" width="100%" alt="CodexQuotaBar local 7-day quota and usage cockpit">
@@ -26,11 +54,11 @@ Expanded cockpit:
 
 ![CodexQuotaBar expanded cockpit with token trend and model composition](assets/readme/cockpit-expanded.png)
 
-Status bar:
+7d-only status bar:
 
-![CodexQuotaBar 7-day status bar indicator](docs/assets/status-bar-preview.png)
+![CodexQuotaBar 7-day-only status bar indicator](docs/assets/status-bar-preview-7d.png)
 
-Floating ball:
+7d-only floating ball:
 
 <table>
   <tr>
@@ -43,7 +71,9 @@ Floating ball:
   </tr>
 </table>
 
-## Current Scope
+## 7d-only Variant Scope
+
+The following scope describes `temp/no-5h-limit-hover`; `main` continues to carry the formal 5h + 7d quota presentation.
 
 - Show one 7-day quota percentage in the menu bar.
 - Use five small signal bars and a readable percentage.
@@ -91,7 +121,8 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 - `v0.2.0` adds the floating ball, saved UI preferences, startup retry, and Open at Login.
 - `v0.2.1` restores quota access after the Codex desktop app moved into ChatGPT.
 - `v0.3.0` adds local quota history, usage trend estimates, and local data cleanup.
-- `v0.3.1-temp` is a temporary branch build for the current single-quota Codex limit shape.
+- `main` remains the formal 5h + 7d line.
+- `temp/no-5h-limit-hover` is maintained as the 7d-only cockpit line alongside `main`.
 - `v0.4.0-temp` adds the real-data quota cockpit, token history, and official API-equivalent estimates.
 
 ## Safety Boundaries
@@ -149,7 +180,7 @@ release/
 - Python helpers for reading local Codex quota, structural Token metadata, and official model price pages.
 - Shell scripts only for simple build commands.
 
-## Reference Style
+## 7d-only Variant Reference Style
 
 The target visual direction is a compact blue status bar block:
 
