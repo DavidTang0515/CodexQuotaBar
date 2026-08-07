@@ -2,112 +2,77 @@
 
 ## Product Goal
 
-CodexQuotaBar is a lightweight macOS menu bar utility for checking Codex quota without opening Codex repeatedly.
+CodexQuotaBar is a lightweight, local-first macOS menu bar utility that answers three questions without opening Codex:
 
-The app should answer one question quickly:
+1. How much 7-day Codex quota is left?
+2. How many local Codex tokens were used?
+3. What would those priced tokens cost at current OpenAI standard API rates?
 
-```text
-How much Codex quota do I have left?
-```
+The API value is an estimate, not a ChatGPT/Codex bill or official subscription balance.
 
 ## Core Display
 
-- Show `5h` quota and `7d` quota in the macOS menu bar.
-- Use a compact two-row layout:
+- Keep one compact 7-day quota indicator in the macOS menu bar.
+- Left-click opens one compact native `Codex Meter` `NSPanel` anchored to the status item.
+- The compact panel shows three equal cards: 7-day quota, Codex Token, and API-equivalent value.
+- The quota card stays on the current 7-day window; the Token period is selected in its card and the API-equivalent value follows it.
+- `View Details` expands the same panel vertically; `Collapse Details` returns it to compact size without resizing the cards.
+- Detailed ranges are Today, 7 days, 30 days, Current month, and All.
+- The restrained detail view adds a daily trend and top-model summary below the unchanged cards.
+- Keep the optional floating ball; clicking it opens the same cockpit panel.
+- Avoid dense grids, project analytics, tool analytics, themes, or hardware metrics.
+
+## Data Sources And Calculation
+
+- Read quota through the local Codex app-server `account/rateLimits/read` method.
+- Select the 10,080-minute window when available; if Codex exposes only one window, use that single current window.
+- Read active and archived Codex JSONL files under `~/.codex/sessions` and `~/.codex/archived_sessions`.
+- Read `~/.codex/state_5.sqlite` only for thread-to-model metadata when JSONL model context is missing.
+- Parse only structural metadata and cumulative `token_count` values.
+- Delta-normalize cumulative snapshots before aggregation.
+- Cached input is a subset of input. Estimate cost as:
 
 ```text
-5h  [5 bars]  52%
-7d  [5 bars]  42%
+(input - cached input) × input price
++ cached input × cached-input price
++ output × output price
 ```
 
-- Use 5 equal-height bars per row.
-- Each bar represents about 20% quota.
-- Keep bars close to the percentage text.
-- Do not add a right-side Codex icon.
-- Use simple status colors:
-  - Green: greater than 60%
-  - Orange: 20% to 60%
-  - Red: less than 20%
+- Reasoning output is a detail of output and is not added a second time.
+- Unknown models remain in token totals but are excluded from USD estimates and labeled unpriced.
+- Time ranges use the Mac's local calendar and timezone.
 
-## Interaction
+## Pricing
 
-- Open as a normal user app.
-- Show status in the menu bar while running.
-- Provide a small menu with:
-  - Manual refresh
-  - Last refresh time
-  - Reset time if available
-  - Recent quota usage trend
-  - Projected 5-hour quota duration
-  - Show or hide the optional floating ball
-  - Enable or disable Open at Login
-  - Open ChatGPT
-  - Clear Local Data
-  - Quit
-- Floating ball mode is optional and experimental.
-- Floating ball mode should be shown by default.
-- Floating ball visibility and position should be remembered.
-- UI preferences and quota history may be persisted locally.
+- Seed the app with a versioned OpenAI API price table.
+- On app launch and manual refresh, update prices only from official `developers.openai.com` model Markdown pages.
+- The five-minute automatic refresh must not access pricing pages.
+- If the network or parser fails, retain and use the last successful local price table.
+- If no cached price exists, use the bundled seed; never invent a price for an unknown model.
+
+## Refresh And Failure States
+
+- Refresh quota and local usage at launch.
+- Refresh quota and local usage automatically every five minutes.
+- Manual refresh also attempts an official price refresh.
+- Unchanged session files must be skipped by the local index.
+- Show clear states for live, cached, partial, unavailable, no-token, and unpriced data.
+- Never display demo values when real data is unavailable.
+
+## Local Data And Uninstall
+
+- Treat all Codex source files as read-only.
+- Never read browser cookies or `~/.codex/auth.json`.
+- Never store prompts, responses, tool arguments, or raw JSONL copies.
+- Store only preferences, quota history, normalized token deltas, file signatures, and price cache under `~/Library/Application Support/CodexQuotaBar`.
+- `Clear Local Data` must move the complete app-owned support directory to the system Trash and leave `~/.codex` untouched.
+- All usage statistics must be rebuildable from the original Codex files.
+- Do not install a LaunchAgent, daemon, cloud service, telemetry, analytics, or auto-updater.
+- Open at Login remains an explicit user-controlled ServiceManagement toggle.
 
 ## Deployment
 
-- Keep deployment lightweight.
-- First public test version should ship as a DMG.
-- The DMG should let users manually drag `CodexQuotaBar.app` into `/Applications`.
-- The app and scripts should not automatically write into `/Applications`.
-- The app should avoid LaunchAgent, daemon, background service, or auto-updater.
-- Open at Login is allowed only as an explicit user-controlled toggle.
-- Open at Login should use macOS ServiceManagement instead of a custom LaunchAgent plist.
-- Prefer a local build/run workflow before packaging.
-- GitHub Releases should include a DMG, a zip fallback, install notes, and SHA-256 checksums.
-
-## Local File Safety
-
-- Treat the app as read-only.
-- Do not modify Codex files.
-- Do not modify user project files.
-- Do not scan unrelated folders.
-- Do not delete files or directories.
-- Do not use batch-delete commands such as `rm -rf`.
-- Do not create logs, caches, or reports.
-- UI preferences may be saved to `~/Library/Application Support/CodexQuotaBar/preferences.json`.
-- UI preferences may include floating ball visibility and position only.
-- Quota history may be saved to `~/Library/Application Support/CodexQuotaBar/history.sqlite`.
-- Quota history may include timestamps, remaining quota percentages, reset times, plan, and source only.
-- Quota history should be pruned to the recent retention window.
-- Users should be able to move local CodexQuotaBar data to Trash from the app menu.
-- Do not read browser cookies.
-- Do not read `~/.codex/auth.json`.
-- Do not store prompts or responses.
-- The Codex CLI may maintain its own runtime state under `~/.codex`; CodexQuotaBar must not inspect or modify that state directly.
-
-## Data Source
-
-- Prefer reading quota through the local Codex app-server.
-- Support the CLI bundled with ChatGPT, a standalone Codex CLI, and the legacy Codex desktop app.
-- Only request quota/rate-limit information.
-- Do not inspect conversation contents.
-- Do not inspect session file contents unless explicitly approved later.
-- Do not present quota percentage trends as exact token counts unless a future API returns real token usage.
-
-## Latency And Refresh
-
-- Manual refresh should feel immediate.
-- Target manual refresh response time: within 1 to 3 seconds when Codex local service is available.
-- Automatic refresh should be conservative by default.
-- Initial automatic refresh interval: 5 minutes.
-- If the app cannot read live quota, show a clear unavailable state instead of guessing.
-- Avoid aggressive polling that may disturb Codex usage windows or waste battery.
-
-## Non-Goals
-
-- No SSD temperature.
-- No CPU or RAM display.
-- No auto-update.
-- No LaunchAgent.
-- No custom LaunchAgent login item.
-- No local database beyond the app-owned quota history SQLite file.
-- No telemetry.
-- No analytics.
-- No cloud sync.
-- No installer package.
+- Remain a native Swift/AppKit menu bar app with bundled Python helpers and system SQLite.
+- Use existing macOS tools only; no new package manager or runtime dependency.
+- Local builds stay inside the worktree and do not write to `/Applications`.
+- Release packaging may provide DMG, zip, install notes, and SHA-256 checksums after visual approval.

@@ -21,8 +21,11 @@ These were not installed for this project, so there is nothing project-specific 
 Runtime-created files:
 
 - `~/Library/Application Support/CodexQuotaBar/preferences.json`
+- `~/Library/Application Support/CodexQuotaBar/history.sqlite`
+- `~/Library/Application Support/CodexQuotaBar/usage.sqlite`
+- `~/Library/Application Support/CodexQuotaBar/pricing.json`
 
-This file stores UI preferences only, such as floating ball visibility and position. It can be deleted during uninstall if a fully clean removal is desired.
+These files contain app preferences, quota snapshots, normalized token deltas/file signatures, and the last official price table. They contain no prompts, responses, raw JSONL copies, credentials, or browser data. `Clear Local Data` moves the complete app-owned directory to Trash.
 
 ## Install Log
 
