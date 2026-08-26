@@ -40,6 +40,9 @@ class FindCodexTests(unittest.TestCase):
 
 
 class NormalizeTests(unittest.TestCase):
+    def test_client_version_matches_candidate(self):
+        self.assertEqual(codex_quota.CLIENT_INFO["version"], "0.3.2")
+
     def test_normalizes_current_rate_limit_shape(self):
         snapshot = codex_quota.normalize(
             {
@@ -53,6 +56,13 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(snapshot["plan"], "plus")
         self.assertEqual(snapshot["fiveHourLeft"], 19)
         self.assertEqual(snapshot["sevenDayLeft"], 87)
+
+    def test_clamps_quota_to_valid_range(self):
+        fully_used = codex_quota.normalize({"primary": {"usedPercent": 150}})
+        unused = codex_quota.normalize({"primary": {"usedPercent": -20}})
+
+        self.assertEqual(fully_used["currentQuotaLeft"], 0)
+        self.assertEqual(unused["currentQuotaLeft"], 100)
 
 
 if __name__ == "__main__":

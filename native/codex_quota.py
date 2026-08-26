@@ -13,7 +13,7 @@ import time
 
 
 TIMEOUT_SECONDS = 10
-CLIENT_INFO = {"name": "codex-quota-bar", "title": "CodexQuotaBar", "version": "0.3.0"}
+CLIENT_INFO = {"name": "codex-quota-bar", "title": "CodexQuotaBar", "version": "0.3.2"}
 
 
 class QuotaError(Exception):
@@ -153,6 +153,8 @@ def normalize(bucket: dict) -> dict:
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source": "codex_app_server",
         "plan": pick(bucket, "planType", "plan_type", "plan"),
+        "currentQuotaLeft": primary.get("leftPercent") if primary else None,
+        "currentQuotaReset": primary.get("resetsAt") if primary else None,
         "fiveHourLeft": primary.get("leftPercent") if primary else None,
         "sevenDayLeft": secondary.get("leftPercent") if secondary else None,
         "fiveHourReset": primary.get("resetsAt") if primary else None,
@@ -247,6 +249,8 @@ def main() -> int:
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "source": "unavailable",
             "error": str(exc),
+            "currentQuotaLeft": None,
+            "currentQuotaReset": None,
             "fiveHourLeft": None,
             "sevenDayLeft": None,
             "fiveHourReset": None,

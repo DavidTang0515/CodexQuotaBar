@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import SQLite3
 import ServiceManagement
@@ -9,16 +10,43 @@ struct QuotaSnapshot: Decodable {
     let source: String?
     let error: String?
     let plan: String?
+    let currentQuotaLeft: Int?
+    let currentQuotaReset: String?
     let fiveHourLeft: Int?
     let sevenDayLeft: Int?
     let fiveHourReset: String?
     let sevenDayReset: String?
+
+}
+
+struct UsageSnapshot: Decodable {
+    let ok: Bool
+    let updatedAt: String?
+    let error: String?
+    let sourceStatus: UsageSourceStatus?
+    let ranges: [String: UsageRangeSnapshot]
+}
+
+struct UsageSourceStatus: Decodable {
+    let discoveredFiles: Int
+    let indexedFiles: Int
+    let changedFiles: Int
+    let errors: [String]
+}
+
+struct UsageRangeSnapshot: Decodable {
+    let inputTokens: Int64
+    let cachedInputTokens: Int64
+    let outputTokens: Int64
+    let reasoningTokens: Int64
+    let totalTokens: Int64
 }
 
 struct AppPreferences: Codable {
     var showFloatingBall: Bool = true
     var floatingBallX: Double?
     var floatingBallY: Double?
+    var usageRange: String?
 
     static func load() -> AppPreferences {
         guard let data = try? Data(contentsOf: fileURL()) else {
@@ -111,7 +139,7 @@ final class QuotaHistoryStore {
             currentRate: rate(entries: entries, now: now, window: 24 * 60 * 60, offset: 0, kind: .sevenDay),
             previousRate: rate(entries: entries, now: now, window: 24 * 60 * 60, offset: 24 * 60 * 60, kind: .sevenDay)
         )
-        return (fiveHour, sevenDay, projectedText(entries: entries, fiveHourRate: fiveHour.currentRate))
+        return (fiveHour, sevenDay, projectedText(entries: entries, currentRate: fiveHour.currentRate))
     }
 
     static func moveLocalDataToTrash() throws {
@@ -119,7 +147,10 @@ final class QuotaHistoryStore {
         for url in [
             AppPreferences.fileURL(),
             AppPreferences.supportDirectory().appendingPathComponent("history.sqlite"),
-            AppPreferences.supportDirectory().appendingPathComponent("quota-history.jsonl")
+            AppPreferences.supportDirectory().appendingPathComponent("quota-history.jsonl"),
+            AppPreferences.supportDirectory().appendingPathComponent("usage.sqlite"),
+            AppPreferences.supportDirectory().appendingPathComponent("usage.sqlite-wal"),
+            AppPreferences.supportDirectory().appendingPathComponent("usage.sqlite-shm")
         ] where manager.fileExists(atPath: url.path) {
             var trashedURL: NSURL?
             try manager.trashItem(at: url, resultingItemURL: &trashedURL)
@@ -307,8 +338,8 @@ final class QuotaHistoryStore {
         return Double(consumed) / elapsed * scale
     }
 
-    private func projectedText(entries: [QuotaHistoryEntry], fiveHourRate: Double?) -> String {
-        guard let latest = entries.last, let left = latest.fiveHourLeft, let rate = fiveHourRate, rate > 0 else {
+    private func projectedText(entries: [QuotaHistoryEntry], currentRate: Double?) -> String {
+        guard let latest = entries.last, let left = latest.fiveHourLeft, let rate = currentRate, rate > 0 else {
             return "Projected 5h: --"
         }
         let hours = Double(left) / rate
@@ -351,15 +382,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let fiveHourTrendItem = NSMenuItem(title: "5h: --", action: nil, keyEquivalent: "")
     private let sevenDayTrendItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
     private let projectedItem = NSMenuItem(title: "Projected 5h: --", action: nil, keyEquivalent: "")
+    private let tokenHeaderItem = NSMenuItem(title: "Local Token", action: nil, keyEquivalent: "")
+    private let tokenRangeItem = NSMenuItem(title: "Period: 7 days", action: #selector(cycleUsageRange), keyEquivalent: "t")
+    private let tokenTotalItem = NSMenuItem(title: "Token: --", action: nil, keyEquivalent: "")
+    private let tokenCompositionItem = NSMenuItem(title: "Input -- · Cached -- · Output --", action: nil, keyEquivalent: "")
     private let clearLocalDataItem = NSMenuItem(title: "Clear Local Data...", action: #selector(clearLocalData), keyEquivalent: "")
     private let stateItem = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
     private let historyStore = QuotaHistoryStore()
     private var timer: Timer?
     private var retryTimer: Timer?
     private var isRefreshing = false
+    private var isUsageRefreshing = false
     private var latestSnapshot: QuotaSnapshot?
+    private var latestUsage: UsageSnapshot?
+    private var lastValidSnapshot: QuotaSnapshot?
+    private var operationError: String?
+    private var lastRenderedFiveHour: Int?
+    private var lastRenderedSevenDay: Int?
+    private var lastRenderedLoading = false
+    private var lastRenderedOK = false
     private var floatingPanel: NSPanel?
     private var floatingView: FloatingBallView?
+    private var localClickMonitor: Any?
+    private var globalClickMonitor: Any?
     private var preferences = AppPreferences.load()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -369,6 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if preferences.showFloatingBall {
             showFloatingBall()
         }
+        installDetailDismissMonitors()
         refreshNow()
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.refreshNow()
@@ -378,6 +424,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
         retryTimer?.invalidate()
+        if let localClickMonitor {
+            NSEvent.removeMonitor(localClickMonitor)
+        }
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+        }
     }
 
     private func configureMenu() {
@@ -393,6 +445,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(fiveHourTrendItem)
         menu.addItem(sevenDayTrendItem)
         menu.addItem(projectedItem)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(tokenHeaderItem)
+        tokenRangeItem.target = self
+        menu.addItem(tokenRangeItem)
+        menu.addItem(tokenTotalItem)
+        menu.addItem(tokenCompositionItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(refreshItem)
         floatingBallItem.target = self
@@ -423,7 +481,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isRefreshing = true
         refreshItem.isEnabled = false
         stateItem.title = "Refreshing..."
-        updateButton(snapshot: nil, loading: true)
+        updateDetailText()
+        refreshUsage()
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let snapshot = self?.readQuota()
@@ -436,12 +495,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func refreshUsage() {
+        guard !isUsageRefreshing else { return }
+        isUsageRefreshing = true
+        updateUsageItems()
+        updateDetailText()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let usage = self?.readUsage()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isUsageRefreshing = false
+                self.latestUsage = usage
+                self.updateUsageItems()
+                self.updateDetailText()
+            }
+        }
+    }
+
     private func helperURL() -> URL? {
         if let resource = Bundle.main.url(forResource: "codex_quota", withExtension: "py") {
             return resource
         }
         let source = URL(fileURLWithPath: #filePath)
         return source.deletingLastPathComponent().appendingPathComponent("codex_quota.py")
+    }
+
+    private func usageHelperURL() -> URL? {
+        if let resource = Bundle.main.url(forResource: "codex_usage", withExtension: "py") {
+            return resource
+        }
+        let source = URL(fileURLWithPath: #filePath)
+        return source.deletingLastPathComponent().appendingPathComponent("codex_usage.py")
+    }
+
+    private func readUsage() -> UsageSnapshot? {
+        guard let helper = usageHelperURL() else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [helper.path]
+        process.environment = [
+            "HOME": NSHomeDirectory(),
+            "CODEX_HOME": NSHomeDirectory() + "/.codex",
+            "LOGNAME": NSUserName(),
+            "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "SHELL": "/bin/zsh",
+            "TMPDIR": NSTemporaryDirectory(),
+            "USER": NSUserName()
+        ]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        let completed = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in completed.signal() }
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        if completed.wait(timeout: .now() + 30) == .timedOut {
+            process.terminate()
+            if completed.wait(timeout: .now() + 1) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                _ = completed.wait(timeout: .now() + 1)
+            }
+            return nil
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        return try? JSONDecoder().decode(UsageSnapshot.self, from: data)
     }
 
     private func readQuota() -> QuotaSnapshot {
@@ -452,6 +572,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 source: "unavailable",
                 error: "Helper not found.",
                 plan: nil,
+                currentQuotaLeft: nil,
+                currentQuotaReset: nil,
                 fiveHourLeft: nil,
                 sevenDayLeft: nil,
                 fiveHourReset: nil,
@@ -475,6 +597,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = Pipe()
+        let completed = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            completed.signal()
+        }
 
         do {
             try process.run()
@@ -485,6 +611,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 source: "unavailable",
                 error: "Could not start helper: \(error.localizedDescription)",
                 plan: nil,
+                currentQuotaLeft: nil,
+                currentQuotaReset: nil,
                 fiveHourLeft: nil,
                 sevenDayLeft: nil,
                 fiveHourReset: nil,
@@ -492,7 +620,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
         }
 
-        process.waitUntilExit()
+        if completed.wait(timeout: .now() + 15) == .timedOut {
+            process.terminate()
+            if completed.wait(timeout: .now() + 1) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                _ = completed.wait(timeout: .now() + 1)
+            }
+            return unavailableSnapshot(error: "Refresh timed out.")
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
 
         do {
@@ -504,6 +639,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 source: "unavailable",
                 error: "Could not parse helper output.",
                 plan: nil,
+                currentQuotaLeft: nil,
+                currentQuotaReset: nil,
                 fiveHourLeft: nil,
                 sevenDayLeft: nil,
                 fiveHourReset: nil,
@@ -514,33 +651,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func apply(snapshot: QuotaSnapshot?) {
         latestSnapshot = snapshot
-        updateButton(snapshot: snapshot, loading: false)
-        floatingView?.snapshot = snapshot
 
         guard let snapshot else {
             stateItem.title = "Unavailable"
-            fiveHourItem.title = "5h: --"
-            sevenDayItem.title = "7d: --"
-            resetItem.title = "Reset: --"
-            updatedItem.title = "Last refresh: --"
+            applyDisplayedSnapshot(lastValidSnapshot)
+            updateDetailText()
             return
         }
 
         if snapshot.ok {
             stateItem.title = "Live quota"
+            operationError = nil
+            lastValidSnapshot = snapshot
             historyStore.record(snapshot: snapshot)
             retryTimer?.invalidate()
             retryTimer = nil
+            applyDisplayedSnapshot(snapshot)
+            updateTrendItems()
         } else {
-            stateItem.title = "Unavailable: \(snapshot.error ?? "unknown error")"
+            stateItem.title = "Quota unavailable"
+            applyDisplayedSnapshot(lastValidSnapshot)
             scheduleRetryIfNeeded()
         }
+        updateDetailText()
+    }
 
-        fiveHourItem.title = "5h: \(percentText(snapshot.fiveHourLeft))"
-        sevenDayItem.title = "7d: \(percentText(snapshot.sevenDayLeft))"
-        resetItem.title = "Reset: 5h \(shortTime(snapshot.fiveHourReset)) / 7d \(shortTime(snapshot.sevenDayReset))"
-        updatedItem.title = "Last refresh: \(shortTime(snapshot.updatedAt))"
-        updateTrendItems()
+    private func applyDisplayedSnapshot(_ snapshot: QuotaSnapshot?) {
+        updateButton(snapshot: snapshot, loading: snapshot == nil && latestSnapshot == nil)
+        floatingView?.snapshot = snapshot
+        fiveHourItem.title = "5h: \(percentText(snapshot?.fiveHourLeft))"
+        sevenDayItem.title = "7d: \(percentText(snapshot?.sevenDayLeft))"
+        resetItem.title = "Reset: 5h \(shortTime(snapshot?.fiveHourReset)) / 7d \(shortTime(snapshot?.sevenDayReset))"
+        updatedItem.title = "Last refresh: \(shortTime(snapshot?.updatedAt))"
     }
 
     private func updateTrendItems() {
@@ -548,6 +690,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fiveHourTrendItem.title = "5h: \(rateText(trends.fiveHour.currentRate, unit: "h")) \(comparisonText(current: trends.fiveHour.currentRate, previous: trends.fiveHour.previousRate))"
         sevenDayTrendItem.title = "7d: \(rateText(trends.sevenDay.currentRate, unit: "day")) \(comparisonText(current: trends.sevenDay.currentRate, previous: trends.sevenDay.previousRate))"
         projectedItem.title = trends.projection
+    }
+
+    private var selectedUsageRange: String {
+        let value = preferences.usageRange ?? "7d"
+        return ["today", "7d", "30d", "month", "all"].contains(value) ? value : "7d"
+    }
+
+    private func updateUsageItems() {
+        let label = usageRangeLabel(selectedUsageRange)
+        tokenRangeItem.title = "Period: \(label)"
+        guard let usage = latestUsage, usage.ok, let summary = usage.ranges[selectedUsageRange] else {
+            tokenTotalItem.title = isUsageRefreshing ? "Token: Scanning local records..." : "Token: --"
+            tokenCompositionItem.title = "Input -- · Cached -- · Output --"
+            return
+        }
+        tokenTotalItem.title = "Token: \(formatTokens(summary.totalTokens))"
+        tokenCompositionItem.title = "Input \(formatTokens(summary.inputTokens)) · Cached \(formatTokens(summary.cachedInputTokens)) · Output \(formatTokens(summary.outputTokens))"
+    }
+
+    @objc private func cycleUsageRange() {
+        let ranges = ["today", "7d", "30d", "month", "all"]
+        let current = ranges.firstIndex(of: selectedUsageRange) ?? 1
+        preferences.usageRange = ranges[(current + 1) % ranges.count]
+        preferences.save()
+        updateUsageItems()
+        updateDetailText()
+    }
+
+    private func usageRangeLabel(_ value: String) -> String {
+        switch value {
+        case "today": return "Today"
+        case "30d": return "30 days"
+        case "month": return "This month"
+        case "all": return "All"
+        default: return "7 days"
+        }
+    }
+
+    private func formatTokens(_ value: Int64) -> String {
+        let number = Double(value)
+        if number >= 1_000_000_000 { return String(format: "%.2fB", number / 1_000_000_000) }
+        if number >= 1_000_000 { return String(format: "%.1fM", number / 1_000_000) }
+        if number >= 1_000 { return String(format: "%.1fK", number / 1_000) }
+        return "\(value)"
     }
 
     private func scheduleRetryIfNeeded() {
@@ -561,13 +747,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func updateButton(snapshot: QuotaSnapshot?, loading: Bool) {
-        let five = snapshot?.fiveHourLeft
-        let seven = snapshot?.sevenDayLeft
-        let image = renderStatusImage(fiveHour: five, sevenDay: seven, loading: loading, ok: snapshot?.ok ?? false)
+        let fiveHour = snapshot?.fiveHourLeft
+        let sevenDay = snapshot?.sevenDayLeft
+        let ok = snapshot?.ok ?? false
+        statusItem.button?.toolTip = detailText()
+        guard fiveHour != lastRenderedFiveHour || sevenDay != lastRenderedSevenDay || loading != lastRenderedLoading || ok != lastRenderedOK else {
+            return
+        }
+        let image = renderStatusImage(fiveHour: fiveHour, sevenDay: sevenDay, loading: loading, ok: ok)
         statusItem.length = image.size.width
         statusItem.button?.image = image
         statusItem.button?.imagePosition = .imageOnly
-        statusItem.button?.toolTip = "CodexQuotaBar 5h \(percentText(five)) / 7d \(percentText(seven))"
+        lastRenderedFiveHour = fiveHour
+        lastRenderedSevenDay = sevenDay
+        lastRenderedLoading = loading
+        lastRenderedOK = ok
     }
 
     private func renderStatusImage(fiveHour: Int?, sevenDay: Int?, loading: Bool, ok: Bool) -> NSImage {
@@ -670,6 +864,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return output.string(from: date)
     }
 
+    private func shortDateTime(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "--" }
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else { return value }
+        let output = DateFormatter()
+        output.dateFormat = "MM-dd HH:mm"
+        return output.string(from: date)
+    }
+
+    private func statusToolTip(snapshot: QuotaSnapshot?) -> String {
+        var lines = ["CodexQuotaBar"]
+        let displayed = snapshot?.ok == true ? snapshot : lastValidSnapshot
+        lines.append("5h: \(percentText(displayed?.fiveHourLeft)) · reset \(shortDateTime(displayed?.fiveHourReset))")
+        lines.append("7d: \(percentText(displayed?.sevenDayLeft)) · reset \(shortDateTime(displayed?.sevenDayReset))")
+        lines.append("Last refresh: \(shortTime(displayed?.updatedAt))")
+        if let usage = latestUsage, usage.ok, let summary = usage.ranges[selectedUsageRange] {
+            lines.append("Token (\(usageRangeLabel(selectedUsageRange))): \(formatTokens(summary.totalTokens))")
+            lines.append("Input \(formatTokens(summary.inputTokens)) · Cached \(formatTokens(summary.cachedInputTokens)) · Output \(formatTokens(summary.outputTokens))")
+        } else if isUsageRefreshing {
+            lines.append("Token: Scanning local records...")
+        } else {
+            lines.append("Token: Unavailable")
+        }
+        if isRefreshing {
+            lines.append("Status: Refreshing...")
+        } else if let snapshot, !snapshot.ok {
+            lines.append("Error: \(snapshot.error ?? "Unknown error")")
+        }
+        if let operationError {
+            lines.append("Error: \(operationError)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func detailText() -> String {
+        statusToolTip(snapshot: latestSnapshot)
+    }
+
+    private func updateDetailText() {
+        let text = detailText()
+        statusItem.button?.toolTip = text
+        floatingView?.detailText = text
+    }
+
+    private func unavailableSnapshot(error: String) -> QuotaSnapshot {
+        QuotaSnapshot(
+            ok: false,
+            updatedAt: isoNow(),
+            source: "unavailable",
+            error: error,
+            plan: nil,
+            currentQuotaLeft: nil,
+            currentQuotaReset: nil,
+            fiveHourLeft: nil,
+            sevenDayLeft: nil,
+            fiveHourReset: nil,
+            sevenDayReset: nil
+        )
+    }
+
     private func isoNow() -> String {
         ISO8601DateFormatter().string(from: Date())
     }
@@ -722,11 +976,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.level = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.hidesOnDeactivate = false
-            panel.isMovableByWindowBackground = true
+            panel.isMovableByWindowBackground = false
+            panel.acceptsMouseMovedEvents = true
             panel.delegate = self
 
             let view = FloatingBallView(frame: NSRect(origin: .zero, size: size))
+            view.onTogglePinnedDetail = { [weak view] in
+                view?.togglePinnedDetail()
+            }
             view.snapshot = latestSnapshot
+            view.detailText = detailText()
             panel.contentView = view
 
             floatingPanel = panel
@@ -735,6 +994,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         floatingPanel?.makeKeyAndOrderFront(nil)
         floatingBallItem.title = "Hide Floating Ball"
+    }
+
+    private func installDetailDismissMonitors() {
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            if event.window !== self.floatingPanel {
+                self.floatingView?.dismissPinnedDetail()
+            }
+            return event
+        }
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.floatingView?.dismissPinnedDetail()
+        }
     }
 
     private func floatingBallOrigin(size: NSSize) -> NSPoint {
@@ -773,7 +1045,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             updateOpenAtLoginMenuItem()
         } catch {
-            stateItem.title = "Open at Login failed: \(error.localizedDescription)"
+            operationError = "Open at Login failed: \(error.localizedDescription)"
+            stateItem.title = "Open at Login unavailable"
+            updateDetailText()
         }
     }
 
@@ -798,10 +1072,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             try QuotaHistoryStore.moveLocalDataToTrash()
             preferences = AppPreferences()
+            latestUsage = nil
             updateTrendItems()
+            updateUsageItems()
+            operationError = nil
             stateItem.title = "Local CodexQuotaBar data moved to Trash."
+            updateDetailText()
         } catch {
-            stateItem.title = "Could not clear local data: \(error.localizedDescription)"
+            operationError = "Could not clear local data: \(error.localizedDescription)"
+            stateItem.title = "Could not clear local data"
+            updateDetailText()
         }
     }
 
@@ -811,14 +1091,132 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 final class FloatingBallView: NSView {
+    var onTogglePinnedDetail: (() -> Void)?
+    private var hoverPanel: NSPanel?
+    private var hoverView: HoverInfoView?
+    private var detailPinned = false
+    private var pointerInside = false
+
     var snapshot: QuotaSnapshot? {
         didSet {
-            needsDisplay = true
+            if oldValue?.fiveHourLeft != snapshot?.fiveHourLeft
+                || oldValue?.sevenDayLeft != snapshot?.sevenDayLeft
+                || oldValue?.ok != snapshot?.ok {
+                needsDisplay = true
+            }
+        }
+    }
+
+    var detailText = "CodexQuotaBar\nQuota: --" {
+        didSet {
+            toolTip = detailText
+            if hoverPanel?.isVisible == true, oldValue != detailText {
+                showHoverPanel()
+            }
         }
     }
 
     override var mouseDownCanMoveWindow: Bool {
-        true
+        false
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        pointerInside = true
+        showHoverPanel()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        pointerInside = false
+        if !detailPinned {
+            hideHoverPanel()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        let start = window.frame.origin
+        window.performDrag(with: event)
+        let end = window.frame.origin
+        if hypot(end.x - start.x, end.y - start.y) < 3 {
+            onTogglePinnedDetail?()
+        }
+    }
+
+    func togglePinnedDetail() {
+        detailPinned.toggle()
+        if detailPinned {
+            showHoverPanel()
+        } else {
+            hideHoverPanel()
+        }
+    }
+
+    func dismissPinnedDetail() {
+        guard detailPinned else { return }
+        detailPinned = false
+        if !pointerInside {
+            hideHoverPanel()
+        }
+    }
+
+    private func showHoverPanel() {
+        guard let window, !detailText.isEmpty else {
+            return
+        }
+
+        let size = HoverInfoView.size(for: detailText)
+        let screenFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        var origin = NSPoint(x: window.frame.maxX + 8, y: window.frame.maxY - size.height)
+        if origin.x + size.width > screenFrame.maxX - 8 {
+            origin.x = window.frame.minX - size.width - 8
+        }
+        origin.x = min(max(origin.x, screenFrame.minX + 8), screenFrame.maxX - size.width - 8)
+        origin.y = min(max(origin.y, screenFrame.minY + 8), screenFrame.maxY - size.height - 8)
+
+        let panel = hoverPanel ?? NSPanel(
+            contentRect: NSRect(origin: origin, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        let frame = NSRect(origin: origin, size: size)
+        if panel.frame != frame {
+            panel.setFrame(frame, display: false)
+        }
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = true
+        let contentView = hoverView ?? HoverInfoView(frame: NSRect(origin: .zero, size: size), text: detailText)
+        contentView.frame = NSRect(origin: .zero, size: size)
+        contentView.update(text: detailText)
+        if panel.contentView !== contentView {
+            panel.contentView = contentView
+        }
+        hoverPanel = panel
+        hoverView = contentView
+        panel.orderFront(nil)
+    }
+
+    private func hideHoverPanel() {
+        hoverPanel?.orderOut(nil)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -832,10 +1230,10 @@ final class FloatingBallView: NSView {
         NSColor.black.withAlphaComponent(0.58).setFill()
         background.fill()
 
-        let five = snapshot?.fiveHourLeft
-        let seven = snapshot?.sevenDayLeft
-        drawRing(in: bounds.insetBy(dx: 7, dy: 7), percent: five, color: color(for: five), width: 4.5)
-        drawRing(in: bounds.insetBy(dx: 16, dy: 16), percent: seven, color: color(for: seven), width: 3.2)
+        let fiveHour = snapshot?.fiveHourLeft
+        let sevenDay = snapshot?.sevenDayLeft
+        drawRing(in: bounds.insetBy(dx: 7, dy: 7), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
+        drawRing(in: bounds.insetBy(dx: 16, dy: 16), percent: sevenDay, color: color(for: sevenDay), width: 3.2)
     }
 
     private func drawRing(in rect: NSRect, percent: Int?, color: NSColor, width: CGFloat) {
@@ -877,9 +1275,70 @@ final class FloatingBallView: NSView {
         return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
     }
 
-    private func percentText(_ value: Int?) -> String {
-        guard let value else { return "--" }
-        return "\(max(0, min(100, value)))"
+}
+
+final class HoverInfoView: NSView {
+    private static let font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .semibold)
+    private static let horizontalPadding: CGFloat = 12
+    private static let verticalPadding: CGFloat = 10
+    private static let lineHeight: CGFloat = 18
+    private static let maximumTextWidth: CGFloat = 280
+
+    private var text: String
+
+    init(frame frameRect: NSRect, text: String) {
+        self.text = text
+        super.init(frame: frameRect)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func update(text: String) {
+        guard self.text != text else { return }
+        self.text = text
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        dirtyRect.fill()
+
+        let bubble = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8)
+        NSColor.black.withAlphaComponent(0.78).setFill()
+        bubble.fill()
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = Self.lineHeight
+        paragraph.maximumLineHeight = Self.lineHeight
+        paragraph.lineBreakMode = .byCharWrapping
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: Self.font,
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraph
+        ]
+        NSString(string: text).draw(in: bounds.insetBy(dx: Self.horizontalPadding, dy: Self.verticalPadding), withAttributes: attributes)
+    }
+
+    static func size(for text: String) -> NSSize {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.minimumLineHeight = Self.lineHeight
+        paragraph.maximumLineHeight = Self.lineHeight
+        paragraph.lineBreakMode = .byCharWrapping
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: Self.font,
+            .paragraphStyle: paragraph
+        ]
+        let textSize = NSString(string: text).boundingRect(
+            with: NSSize(width: Self.maximumTextWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        ).size
+        return NSSize(
+            width: max(174, min(Self.maximumTextWidth, ceil(textSize.width)) + Self.horizontalPadding * 2),
+            height: ceil(textSize.height) + Self.verticalPadding * 2
+        )
     }
 }
 
