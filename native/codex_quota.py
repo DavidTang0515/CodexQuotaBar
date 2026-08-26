@@ -13,7 +13,7 @@ import time
 
 
 TIMEOUT_SECONDS = 10
-CLIENT_INFO = {"name": "codex-quota-bar", "title": "CodexQuotaBar", "version": "0.3.2"}
+CLIENT_INFO = {"name": "codex-quota-bar", "title": "CodexQuotaBar", "version": "0.4.0"}
 
 
 class QuotaError(Exception):

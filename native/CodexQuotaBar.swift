@@ -1060,7 +1060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func clearLocalData() {
         let alert = NSAlert()
         alert.messageText = "Clear CodexQuotaBar local data?"
-        alert.informativeText = "This moves quota history and UI preferences to Trash. It does not touch ChatGPT, Codex CLI, ~/.codex, prompts, or projects."
+        alert.informativeText = "This moves quota history, the local Token index, and UI preferences to Trash. It does not touch ChatGPT, Codex CLI, ~/.codex, prompts, or projects."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Move to Trash")
         alert.addButton(withTitle: "Cancel")

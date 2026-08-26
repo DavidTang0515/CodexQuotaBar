@@ -38,6 +38,8 @@ How much Codex quota do I have left?
   - Last refresh time
   - Reset time if available
   - Recent quota usage trend
+  - Local Token totals for today, 7 days, 30 days, this month, or all records
+  - Local Token input, cached input, and output composition
   - Projected 5-hour quota duration
   - Show or hide the optional floating ball
   - Enable or disable Open at Login
@@ -71,9 +73,11 @@ How much Codex quota do I have left?
 - Do not use batch-delete commands such as `rm -rf`.
 - Do not create logs, caches, or reports.
 - UI preferences may be saved to `~/Library/Application Support/CodexQuotaBar/preferences.json`.
-- UI preferences may include floating ball visibility and position only.
+- UI preferences may include floating ball visibility, position, and the selected Token period.
 - Quota history may be saved to `~/Library/Application Support/CodexQuotaBar/history.sqlite`.
 - Quota history may include timestamps, remaining quota percentages, reset times, plan, and source only.
+- A local Token index may be saved to `~/Library/Application Support/CodexQuotaBar/usage.sqlite`.
+- The Token index may contain only timestamps, Token counts, model identifiers, and source-file scan metadata needed for incremental updates.
 - Quota history should be pruned to the recent retention window.
 - Users should be able to move local CodexQuotaBar data to Trash from the app menu.
 - Do not read browser cookies.
@@ -87,8 +91,9 @@ How much Codex quota do I have left?
 - Support the CLI bundled with ChatGPT, a standalone Codex CLI, and the legacy Codex desktop app.
 - Only request quota/rate-limit information.
 - Do not inspect conversation contents.
-- Do not inspect session file contents unless explicitly approved later.
-- Do not present quota percentage trends as exact token counts unless a future API returns real token usage.
+- Local Token summaries may inspect only explicit Token-count, timestamp, and model metadata in `~/.codex/sessions` and `~/.codex/archived_sessions`.
+- Do not extract, display, or store prompts, responses, project paths, or other conversation content.
+- Do not present quota-percentage trends as Token counts. Local Token summaries must be labeled as local and must aggregate only explicit Token-count metadata.
 
 ## Latency And Refresh
 
@@ -106,7 +111,7 @@ How much Codex quota do I have left?
 - No auto-update.
 - No LaunchAgent.
 - No custom LaunchAgent login item.
-- No local database beyond the app-owned quota history SQLite file.
+- No local database beyond the app-owned quota history and Token-index SQLite files.
 - No telemetry.
 - No analytics.
 - No cloud sync.

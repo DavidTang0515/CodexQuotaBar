@@ -53,11 +53,13 @@ Floating ball:
 - Show a small floating ball by default.
 - Remember floating ball visibility and position.
 - Record local quota history for trend estimates.
+- Summarize local Codex Token counts for today, 7 days, 30 days, this month, or all records.
 - Provide a menu with:
   - Last refresh time
   - 5-hour reset time
   - 7-day reset time
   - Recent quota usage trend
+  - Local Token totals and input/cache/output composition
   - Projected 5-hour quota duration
   - Manual refresh
   - Optional floating ball
@@ -95,15 +97,16 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 - `v0.2.0` adds the floating ball, saved UI preferences, startup retry, and Open at Login.
 - `v0.2.1` restores quota access after the Codex desktop app moved into ChatGPT.
 - `v0.3.0` adds local quota history, usage trend estimates, and local data cleanup.
+- `v0.4.0` adds local Token summaries and refresh hardening while retaining the 5-hour and 7-day display.
 
 ## Safety Boundaries
 
 - Do not read browser cookies.
 - Do not read `~/.codex/auth.json`.
-- Do not scan unrelated project folders.
+- Only extract Token-count, timestamp, and model metadata from `~/.codex/sessions` and `~/.codex/archived_sessions`; do not scan unrelated project folders.
 - Do not store prompts or responses.
 - The Codex CLI may maintain its own runtime state under `~/.codex`.
-- Store UI preferences and quota history in `~/Library/Application Support/CodexQuotaBar`.
+- Store UI preferences, quota history, and the local Token index in `~/Library/Application Support/CodexQuotaBar`.
 - Quota history is stored in `history.sqlite` and contains only timestamps, remaining quota percentages, reset times, plan, and source.
 - Keep quota history local and prune it to the recent retention window.
 - Do not install a LaunchAgent.
@@ -147,7 +150,7 @@ release/
 ## Proposed Tech Stack
 
 - Swift + AppKit for the macOS status bar app.
-- Python helper for reading local Codex quota from the local Codex app-server.
+- Python helpers for reading local Codex quota and aggregating local Token metadata.
 - Shell scripts only for simple build commands.
 
 ## Reference Style

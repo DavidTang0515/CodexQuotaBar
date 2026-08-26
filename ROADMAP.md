@@ -44,3 +44,13 @@
 - Local history database.
 - Complex theme system.
 - Installer that writes into `/Applications`.
+
+## Version 0.4
+
+- Keep the compact two-row `5h` and `7d` menu-bar display.
+- Add local Token summaries in the menu without adding a cockpit window.
+- Support today, 7 days, 30 days, this month, and all-record periods.
+- Show input, cached input, and output composition from explicit local Token metadata.
+- Keep the last valid quota visible when a refresh fails or times out.
+- Avoid unnecessary status-item redraws when values have not changed.
+- Keep all app-owned history, Token index, and preferences local and removable through `Clear Local Data...`.

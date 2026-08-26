@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexQuotaBar"
-VERSION="0.3.0"
+VERSION="0.4.0"
 APP_BUNDLE="$ROOT_DIR/native/build/$APP_NAME.app"
 RELEASE_DIR="$ROOT_DIR/release"
 STAGE_DIR="$RELEASE_DIR/dmg-stage-$VERSION"
@@ -40,13 +40,14 @@ Uninstall:
 
 Privacy:
 - Reads local Codex quota through the local Codex app-server.
+- Extracts Token-count, timestamp, and model metadata from ~/.codex/sessions and ~/.codex/archived_sessions for local usage summaries.
 - The Codex CLI may maintain its own runtime state under ~/.codex.
 - Does not read browser cookies.
 - Does not read ~/.codex/auth.json.
 - Does not store prompts or responses.
 - Does not install a LaunchAgent, daemon, or auto-updater.
 - Open at Login is optional and controlled from the app menu.
-- Stores UI preferences and local quota history under ~/Library/Application Support/CodexQuotaBar.
+- Stores UI preferences, local quota history, and the local Token index under ~/Library/Application Support/CodexQuotaBar.
 - Quota history is stored in history.sqlite and contains timestamps, remaining quota percentages, reset times, plan, and source only.
 README
 

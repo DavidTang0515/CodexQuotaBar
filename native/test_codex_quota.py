@@ -41,7 +41,7 @@ class FindCodexTests(unittest.TestCase):
 
 class NormalizeTests(unittest.TestCase):
     def test_client_version_matches_candidate(self):
-        self.assertEqual(codex_quota.CLIENT_INFO["version"], "0.3.2")
+        self.assertEqual(codex_quota.CLIENT_INFO["version"], "0.4.0")
 
     def test_normalizes_current_rate_limit_shape(self):
         snapshot = codex_quota.normalize(
