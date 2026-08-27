@@ -874,28 +874,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func statusToolTip(snapshot: QuotaSnapshot?) -> String {
-        var lines = ["CodexQuotaBar"]
         let displayed = snapshot?.ok == true ? snapshot : lastValidSnapshot
-        lines.append("5h: \(percentText(displayed?.fiveHourLeft)) · reset \(shortDateTime(displayed?.fiveHourReset))")
-        lines.append("7d: \(percentText(displayed?.sevenDayLeft)) · reset \(shortDateTime(displayed?.sevenDayReset))")
-        lines.append("Last refresh: \(shortTime(displayed?.updatedAt))")
-        if let usage = latestUsage, usage.ok, let summary = usage.ranges[selectedUsageRange] {
-            lines.append("Token (\(usageRangeLabel(selectedUsageRange))): \(formatTokens(summary.totalTokens))")
-            lines.append("Input \(formatTokens(summary.inputTokens)) · Cached \(formatTokens(summary.cachedInputTokens)) · Output \(formatTokens(summary.outputTokens))")
-        } else if isUsageRefreshing {
-            lines.append("Token: Scanning local records...")
-        } else {
-            lines.append("Token: Unavailable")
-        }
-        if isRefreshing {
-            lines.append("Status: Refreshing...")
-        } else if let snapshot, !snapshot.ok {
-            lines.append("Error: \(snapshot.error ?? "Unknown error")")
-        }
-        if let operationError {
-            lines.append("Error: \(operationError)")
-        }
-        return lines.joined(separator: "\n")
+        return [
+            "5h: \(percentText(displayed?.fiveHourLeft)) · reset \(shortDateTime(displayed?.fiveHourReset))",
+            "7d: \(percentText(displayed?.sevenDayLeft)) · reset \(shortDateTime(displayed?.sevenDayReset))"
+        ].joined(separator: "\n")
     }
 
     private func detailText() -> String {
@@ -1107,7 +1090,7 @@ final class FloatingBallView: NSView {
         }
     }
 
-    var detailText = "CodexQuotaBar\nQuota: --" {
+    var detailText = "5h: -- · reset --\n7d: -- · reset --" {
         didSet {
             toolTip = detailText
             if hoverPanel?.isVisible == true, oldValue != detailText {
