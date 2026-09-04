@@ -17,6 +17,8 @@ See [REQUIREMENTS.md](REQUIREMENTS.md) for the current product requirements and 
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
+See [docs/DESIGN.md](docs/DESIGN.md) for the maintained visual baseline and the design-before-development workflow.
+
 ## Actual Preview
 
 Menu bar display:

@@ -1,0 +1,36 @@
+<mxGraphModel adaptiveColors="auto" dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="2" value="双额度胶囊候选稿 v0.4.2" style="text;html=1;align=center;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#1D1D1F;" vertex="1" parent="1">
+      <mxGeometry x="220" y="40" width="520" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="3" value="" style="rounded=1;arcSize=50;html=1;fillColor=#1A1A1A;fillOpacity=88;strokeColor=#FFFFFF;strokeOpacity=16;strokeWidth=5;shadow=1;" vertex="1" parent="1">
+      <mxGeometry x="220" y="130" width="520" height="200" as="geometry"/>
+    </mxCell>
+    <mxCell id="4" value="" style="rounded=1;arcSize=50;html=1;fillColor=none;strokeColor=#FFB347;strokeWidth=18;" vertex="1" parent="1">
+      <mxGeometry x="228" y="138" width="504" height="184" as="geometry"/>
+    </mxCell>
+    <mxCell id="5" value="" style="rounded=1;arcSize=50;html=1;fillColor=none;strokeColor=#47C77A;strokeWidth=12;" vertex="1" parent="1">
+      <mxGeometry x="246" y="156" width="468" height="148" as="geometry"/>
+    </mxCell>
+    <mxCell id="6" value="&lt;font color=&quot;#FFFFFF&quot;&gt;&lt;font style=&quot;font-size:28px&quot;&gt;5h&lt;/font&gt;&amp;nbsp;&amp;nbsp;&lt;b style=&quot;font-size:50px&quot;&gt;59%&lt;/b&gt;&lt;/font&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="255" y="185" width="210" height="90" as="geometry"/>
+    </mxCell>
+    <mxCell id="7" value="" style="rounded=0;html=1;fillColor=#FFFFFF;fillOpacity=18;strokeColor=none;" vertex="1" parent="1">
+      <mxGeometry x="478" y="190" width="2" height="80" as="geometry"/>
+    </mxCell>
+    <mxCell id="8" value="&lt;font color=&quot;#FFFFFF&quot;&gt;&lt;font style=&quot;font-size:26px&quot;&gt;7d&lt;/font&gt;&amp;nbsp;&amp;nbsp;&lt;b style=&quot;font-size:44px&quot;&gt;82%&lt;/b&gt;&lt;/font&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="495" y="185" width="205" height="90" as="geometry"/>
+    </mxCell>
+    <mxCell id="9" value="外轨 5h：状态橙 #FFB347 · 线宽 4.5 px" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontColor=#5C5C60;" vertex="1" parent="1">
+      <mxGeometry x="250" y="370" width="460" height="30" as="geometry"/>
+    </mxCell>
+    <mxCell id="10" value="内轨 7d：状态绿 #47C77A · 线宽 3.2 px" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontColor=#5C5C60;" vertex="1" parent="1">
+      <mxGeometry x="250" y="410" width="460" height="30" as="geometry"/>
+    </mxCell>
+    <mxCell id="11" value="实际目标尺寸：128 × 50 px" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontColor=#5C5C60;" vertex="1" parent="1">
+      <mxGeometry x="250" y="450" width="460" height="30" as="geometry"/>
+    </mxCell>
+  </root>
+</mxGraphModel>
