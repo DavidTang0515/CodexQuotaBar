@@ -946,7 +946,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showFloatingBall() {
         if floatingPanel == nil {
-            let size = NSSize(width: 108, height: 50)
+            let size = FloatingCapsuleLayout.viewSize
             let origin = floatingBallOrigin(size: size)
             let panel = NSPanel(
                 contentRect: NSRect(origin: origin, size: size),
@@ -1076,6 +1076,356 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+}
+
+struct FloatingCapsuleLayout {
+    static let viewSize = NSSize(width: 128, height: 50)
+
+    private static let capsuleInset: CGFloat = 4
+    static let outerTrackLineWidth: CGFloat = 4.5
+    static let innerTrackLineWidth: CGFloat = 3.2
+    private static let outerTrackInset: CGFloat = 2.25
+    private static let innerTrackInset: CGFloat = 6.5
+    private static let centerGap: CGFloat = 4
+    private static let labelValueGap: CGFloat = 1.5
+    private static let numberPercentGap: CGFloat = 1
+    private static let horizontalPadding: CGFloat = 1.5
+    private static let verticalPadding: CGFloat = 1
+    private static let valueSamples = ["--", "0", "9", "59", "100"]
+
+    struct Column {
+        let label: String
+        let value: String
+        let labelFont: NSFont
+        let valueFont: NSFont
+        let percentFont: NSFont
+        let labelSlotRect: NSRect
+        let valueSlotRect: NSRect
+        let percentSlotRect: NSRect
+        let columnRect: NSRect
+        let widestValueWidth: CGFloat
+        let percentWidth: CGFloat
+        let rowHeight: CGFloat
+    }
+
+    struct Metrics {
+        let capsuleBounds: NSRect
+        let outerTrackRect: NSRect
+        let innerTrackRect: NSRect
+        let innerInteriorRect: NSRect
+        let textSafeRect: NSRect
+        let dividerRect: NSRect
+        let fiveHour: Column
+        let sevenDay: Column
+        let tracksFit: Bool
+        let textFits: Bool
+        let columnsDoNotOverlap: Bool
+        let slotsAreStable: Bool
+    }
+
+    private struct ColumnRequirements {
+        let labelWidth: CGFloat
+        let widestValueWidth: CGFloat
+        let percentWidth: CGFloat
+        let rowHeight: CGFloat
+
+        var totalWidth: CGFloat {
+            labelWidth + labelValueGap + widestValueWidth + numberPercentGap + percentWidth
+        }
+    }
+
+    static func make(fiveHour: Int?, sevenDay: Int?) -> Metrics {
+        let viewBounds = NSRect(origin: .zero, size: viewSize)
+        let capsuleBounds = viewBounds.insetBy(dx: capsuleInset, dy: capsuleInset)
+        let outerTrackRect = capsuleBounds.insetBy(dx: outerTrackInset, dy: outerTrackInset)
+        let innerTrackRect = capsuleBounds.insetBy(dx: innerTrackInset, dy: innerTrackInset)
+        let innerInteriorRect = innerTrackRect.insetBy(
+            dx: innerTrackLineWidth / 2,
+            dy: innerTrackLineWidth / 2
+        )
+
+        let fiveHourLabelFont = NSFont.systemFont(ofSize: 8.5, weight: .semibold)
+        let sevenDayLabelFont = NSFont.systemFont(ofSize: 8.5, weight: .medium)
+        let percentFont = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .medium)
+        var fiveHourSize: CGFloat = 14.5
+        var sevenDaySize: CGFloat = 13
+        var textSafeRect = NSRect.zero
+
+        for _ in 0..<32 {
+            let fiveHourFont = NSFont.monospacedDigitSystemFont(ofSize: fiveHourSize, weight: .semibold)
+            let sevenDayFont = NSFont.monospacedDigitSystemFont(ofSize: sevenDaySize, weight: .medium)
+            let fiveHourRequirements = requirements(
+                label: "5h",
+                labelFont: fiveHourLabelFont,
+                valueFont: fiveHourFont,
+                percentFont: percentFont
+            )
+            let sevenDayRequirements = requirements(
+                label: "7d",
+                labelFont: sevenDayLabelFont,
+                valueFont: sevenDayFont,
+                percentFont: percentFont
+            )
+            let rowHeight = max(fiveHourRequirements.rowHeight, sevenDayRequirements.rowHeight)
+            textSafeRect = safeTextRect(in: innerInteriorRect, rowHeight: rowHeight)
+            let availableWidth = textSafeRect.width - centerGap
+            let fits = textSafeRect.height <= innerInteriorRect.height
+                && fiveHourRequirements.totalWidth + sevenDayRequirements.totalWidth <= availableWidth
+            if fits {
+                break
+            }
+            if fiveHourSize > 11.5 {
+                fiveHourSize -= 0.25
+            }
+            if sevenDaySize > 10.5 {
+                sevenDaySize -= 0.25
+            }
+        }
+
+        let fiveHourFont = NSFont.monospacedDigitSystemFont(ofSize: fiveHourSize, weight: .semibold)
+        let sevenDayFont = NSFont.monospacedDigitSystemFont(ofSize: sevenDaySize, weight: .medium)
+        let fiveHourRequirements = requirements(
+            label: "5h",
+            labelFont: fiveHourLabelFont,
+            valueFont: fiveHourFont,
+            percentFont: percentFont
+        )
+        let sevenDayRequirements = requirements(
+            label: "7d",
+            labelFont: sevenDayLabelFont,
+            valueFont: sevenDayFont,
+            percentFont: percentFont
+        )
+        let rowHeight = max(fiveHourRequirements.rowHeight, sevenDayRequirements.rowHeight)
+        textSafeRect = safeTextRect(in: innerInteriorRect, rowHeight: rowHeight)
+        let availableWidth = max(0, textSafeRect.width - centerGap)
+        let minimumLeftWidth = fiveHourRequirements.totalWidth
+        let minimumRightWidth = sevenDayRequirements.totalWidth
+        var leftWidth = max(minimumLeftWidth, availableWidth / 2)
+        var rightWidth = availableWidth - leftWidth
+        if rightWidth < minimumRightWidth {
+            rightWidth = minimumRightWidth
+            leftWidth = availableWidth - rightWidth
+        }
+
+        let leftColumnRect = NSRect(
+            x: textSafeRect.minX,
+            y: textSafeRect.minY,
+            width: max(0, leftWidth),
+            height: textSafeRect.height
+        )
+        let rightColumnRect = NSRect(
+            x: leftColumnRect.maxX + centerGap,
+            y: textSafeRect.minY,
+            width: max(0, rightWidth),
+            height: textSafeRect.height
+        )
+        let fiveHourColumn = makeColumn(
+            label: "5h",
+            value: numberText(fiveHour),
+            columnRect: leftColumnRect,
+            labelFont: fiveHourLabelFont,
+            valueFont: fiveHourFont,
+            percentFont: percentFont,
+            requirements: fiveHourRequirements
+        )
+        let sevenDayColumn = makeColumn(
+            label: "7d",
+            value: numberText(sevenDay),
+            columnRect: rightColumnRect,
+            labelFont: sevenDayLabelFont,
+            valueFont: sevenDayFont,
+            percentFont: percentFont,
+            requirements: sevenDayRequirements
+        )
+        let dividerRect = NSRect(
+            x: textSafeRect.midX - 0.5,
+            y: textSafeRect.minY + 1,
+            width: 1,
+            height: max(0, textSafeRect.height - 2)
+        )
+
+        let tracksFit = contains(
+            capsuleBounds,
+            outerTrackRect.insetBy(dx: -outerTrackLineWidth / 2, dy: -outerTrackLineWidth / 2)
+        ) && contains(
+            capsuleBounds,
+            innerTrackRect.insetBy(dx: -innerTrackLineWidth / 2, dy: -innerTrackLineWidth / 2)
+        )
+        let textFits = textSafeRect.height <= innerInteriorRect.height
+            && contains(innerInteriorRect, textSafeRect)
+            && [fiveHourColumn, sevenDayColumn].allSatisfy { column in
+                contains(textSafeRect, column.labelSlotRect)
+                    && contains(textSafeRect, column.valueSlotRect)
+                    && contains(textSafeRect, column.percentSlotRect)
+                    && measuredTextSize(column.label, font: column.labelFont).width <= column.labelSlotRect.width
+                    && valueSamples.allSatisfy {
+                        measuredTextSize($0, font: column.valueFont).width <= column.valueSlotRect.width
+                    }
+                    && measuredTextSize("%", font: column.percentFont).width <= column.percentSlotRect.width
+            }
+        let columnsDoNotOverlap = fiveHourColumn.columnRect.maxX + centerGap <= sevenDayColumn.columnRect.minX + 0.01
+            && contains(textSafeRect, dividerRect)
+        let slotsAreStable = [fiveHourColumn, sevenDayColumn].allSatisfy { column in
+            valueSamples.allSatisfy {
+                measuredTextSize($0, font: column.valueFont).width <= column.valueSlotRect.width
+            }
+        }
+
+        return Metrics(
+            capsuleBounds: capsuleBounds,
+            outerTrackRect: outerTrackRect,
+            innerTrackRect: innerTrackRect,
+            innerInteriorRect: innerInteriorRect,
+            textSafeRect: textSafeRect,
+            dividerRect: dividerRect,
+            fiveHour: fiveHourColumn,
+            sevenDay: sevenDayColumn,
+            tracksFit: tracksFit,
+            textFits: textFits,
+            columnsDoNotOverlap: columnsDoNotOverlap,
+            slotsAreStable: slotsAreStable
+        )
+    }
+
+    private static func requirements(
+        label: String,
+        labelFont: NSFont,
+        valueFont: NSFont,
+        percentFont: NSFont
+    ) -> ColumnRequirements {
+        let labelWidth = measuredTextSize(label, font: labelFont).width
+        let widestValueWidth = valueSamples
+            .map { measuredTextSize($0, font: valueFont).width }
+            .max() ?? 0
+        let percentWidth = measuredTextSize("%", font: percentFont).width
+        let rowHeight = max(
+            measuredTextSize(label, font: labelFont).height,
+            measuredTextSize("100", font: valueFont).height,
+            measuredTextSize("%", font: percentFont).height
+        )
+        return ColumnRequirements(
+            labelWidth: labelWidth,
+            widestValueWidth: widestValueWidth,
+            percentWidth: percentWidth,
+            rowHeight: rowHeight
+        )
+    }
+
+    private static func safeTextRect(in innerInteriorRect: NSRect, rowHeight: CGFloat) -> NSRect {
+        let safeHeight = rowHeight + verticalPadding * 2
+        let radius = innerInteriorRect.height / 2
+        let halfSpan = min(radius, safeHeight / 2)
+        let cornerClearance = radius - sqrt(max(0, radius * radius - halfSpan * halfSpan))
+        let horizontalInset = cornerClearance + horizontalPadding
+        return NSRect(
+            x: innerInteriorRect.minX + horizontalInset,
+            y: innerInteriorRect.midY - safeHeight / 2,
+            width: innerInteriorRect.width - horizontalInset * 2,
+            height: safeHeight
+        )
+    }
+
+    private static func makeColumn(
+        label: String,
+        value: String,
+        columnRect: NSRect,
+        labelFont: NSFont,
+        valueFont: NSFont,
+        percentFont: NSFont,
+        requirements: ColumnRequirements
+    ) -> Column {
+        let rowRect = NSRect(
+            x: columnRect.minX,
+            y: columnRect.midY - requirements.rowHeight / 2,
+            width: columnRect.width,
+            height: requirements.rowHeight
+        )
+        let percentX = columnRect.maxX - requirements.percentWidth
+        let valueX = percentX - numberPercentGap - requirements.widestValueWidth
+        return Column(
+            label: label,
+            value: value,
+            labelFont: labelFont,
+            valueFont: valueFont,
+            percentFont: percentFont,
+            labelSlotRect: NSRect(
+                x: rowRect.minX,
+                y: rowRect.minY,
+                width: requirements.labelWidth,
+                height: rowRect.height
+            ),
+            valueSlotRect: NSRect(
+                x: valueX,
+                y: rowRect.minY,
+                width: requirements.widestValueWidth,
+                height: rowRect.height
+            ),
+            percentSlotRect: NSRect(
+                x: percentX,
+                y: rowRect.minY,
+                width: requirements.percentWidth,
+                height: rowRect.height
+            ),
+            columnRect: columnRect,
+            widestValueWidth: requirements.widestValueWidth,
+            percentWidth: requirements.percentWidth,
+            rowHeight: rowRect.height
+        )
+    }
+
+    private static func contains(_ outer: NSRect, _ inner: NSRect) -> Bool {
+        inner.minX >= outer.minX - 0.01
+            && inner.minY >= outer.minY - 0.01
+            && inner.maxX <= outer.maxX + 0.01
+            && inner.maxY <= outer.maxY + 0.01
+    }
+
+    static func measuredTextSize(_ text: String, font: NSFont) -> NSSize {
+        let rect = NSString(string: text).boundingRect(
+            with: NSSize(width: 1_000, height: 100),
+            options: [.usesFontLeading],
+            attributes: [.font: font]
+        )
+        return NSSize(width: ceil(rect.width), height: ceil(rect.height))
+    }
+
+    static func numberText(_ percent: Int?) -> String {
+        guard let percent else { return "--" }
+        return "\(max(0, min(100, percent)))"
+    }
+
+    static func printValidation() {
+        let values: [Int?] = [nil, 0, 9, 59, 100]
+        print("Floating capsule layout validation using actual AppKit font measurements")
+        for fiveHour in values {
+            for sevenDay in values {
+                let metrics = make(fiveHour: fiveHour, sevenDay: sevenDay)
+                let left = numberText(fiveHour)
+                let right = numberText(sevenDay)
+                let important = (fiveHour == nil && sevenDay == nil) || (fiveHour == 100 && sevenDay == 100)
+                let marker = important ? "CHECK" : "case"
+                let status = metrics.tracksFit && metrics.textFits && metrics.columnsDoNotOverlap && metrics.slotsAreStable
+                    ? "PASS"
+                    : "FAIL"
+                print(
+                    "\(marker) \(left)%/\(right)% status=\(status) "
+                        + "safe=\(rectDescription(metrics.textSafeRect)) "
+                        + "columns=\(format(metrics.fiveHour.columnRect.width))/\(format(metrics.sevenDay.columnRect.width)) "
+                        + "slots=\(format(metrics.fiveHour.widestValueWidth))/\(format(metrics.sevenDay.widestValueWidth)) "
+                        + "fonts=\(format(metrics.fiveHour.valueFont.pointSize))/\(format(metrics.sevenDay.valueFont.pointSize))"
+                )
+            }
+        }
+    }
+
+    private static func format(_ value: CGFloat) -> String {
+        String(format: "%.1f", Double(value))
+    }
+
+    private static func rectDescription(_ rect: NSRect) -> String {
+        "\(format(rect.minX)),\(format(rect.minY)),\(format(rect.width)),\(format(rect.height))"
     }
 }
 
@@ -1211,88 +1561,144 @@ final class FloatingBallView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        let capsuleBounds = bounds.insetBy(dx: 6, dy: 6)
+        let fiveHour = snapshot?.fiveHourLeft
+        let sevenDay = snapshot?.sevenDayLeft
+        let layout = FloatingCapsuleLayout.make(fiveHour: fiveHour, sevenDay: sevenDay)
+
         NSColor.clear.setFill()
         dirtyRect.fill()
 
         let background = NSBezierPath(
-            roundedRect: capsuleBounds,
-            xRadius: capsuleBounds.height / 2,
-            yRadius: capsuleBounds.height / 2
+            roundedRect: layout.capsuleBounds,
+            xRadius: layout.capsuleBounds.height / 2,
+            yRadius: layout.capsuleBounds.height / 2
         )
         NSColor.black.withAlphaComponent(0.58).setFill()
         background.fill()
 
-        let fiveHour = snapshot?.fiveHourLeft
-        let sevenDay = snapshot?.sevenDayLeft
-        let ringBounds = NSRect(
-            x: capsuleBounds.minX,
-            y: capsuleBounds.minY,
-            width: capsuleBounds.height,
-            height: capsuleBounds.height
-        )
-        let ringScale = ringBounds.height / 42
-        drawRing(
-            in: ringBounds.insetBy(dx: 7 * ringScale, dy: 7 * ringScale),
+        drawQuotaTrack(
+            in: layout.outerTrackRect,
             percent: fiveHour,
             color: color(for: fiveHour),
-            width: 4.5 * ringScale
+            lineWidth: FloatingCapsuleLayout.outerTrackLineWidth
         )
-        drawRing(
-            in: ringBounds.insetBy(dx: 16 * ringScale, dy: 16 * ringScale),
+        drawQuotaTrack(
+            in: layout.innerTrackRect,
             percent: sevenDay,
             color: color(for: sevenDay),
-            width: 3.2 * ringScale
+            lineWidth: FloatingCapsuleLayout.innerTrackLineWidth
         )
-
-        let contentBounds = NSRect(
-            x: ringBounds.maxX + 4,
-            y: capsuleBounds.minY + 3,
-            width: capsuleBounds.maxX - 8 - (ringBounds.maxX + 4),
-            height: capsuleBounds.height - 6
-        )
-
-        drawQuotaValues(fiveHour: fiveHour, in: contentBounds)
+        drawDivider(in: layout.dividerRect)
+        drawQuotaColumn(layout.fiveHour, primary: true)
+        drawQuotaColumn(layout.sevenDay, primary: false)
     }
 
-    private func drawQuotaValues(fiveHour: Int?, in contentBounds: NSRect) {
-        let percentFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
-        let percentSize = measuredTextSize("%", font: percentFont)
-        let gap: CGFloat = 3
-        let mainValueWidth = contentBounds.width - percentSize.width - gap
-        let mainText = floatingNumberText(fiveHour)
-        let mainFont = fittedNumericFont(
-            for: mainText,
-            preferredSize: 23,
-            minimumSize: 18,
-            weight: .semibold,
-            availableWidth: mainValueWidth
-        )
-        let mainSize = measuredTextSize(mainText, font: mainFont)
-        let mainHeight = mainSize.height + 2
-        let mainRect = NSRect(
-            x: contentBounds.minX,
-            y: contentBounds.midY - mainHeight / 2,
-            width: mainValueWidth,
-            height: mainHeight
-        )
-        let percentRect = NSRect(
-            x: contentBounds.maxX - percentSize.width,
-            y: mainRect.maxY - percentSize.height,
-            width: percentSize.width,
-            height: percentSize.height + 1
-        )
+    private func drawQuotaColumn(_ column: FloatingCapsuleLayout.Column, primary: Bool) {
+        let labelColor = primary ? NSColor.white : NSColor.white.withAlphaComponent(0.78)
+        let valueColor = primary ? NSColor.white : NSColor.white.withAlphaComponent(0.84)
+        let percentColor = primary ? NSColor.white.withAlphaComponent(0.82) : NSColor.white.withAlphaComponent(0.68)
+        drawCenteredFloatingText(column.label, in: column.labelSlotRect, font: column.labelFont, color: labelColor)
+        drawCenteredFloatingText(column.value, in: column.valueSlotRect, font: column.valueFont, color: valueColor, alignment: .right)
+        drawCenteredFloatingText("%", in: column.percentSlotRect, font: column.percentFont, color: percentColor, alignment: .right)
+    }
 
-        drawFloatingText(mainText, in: mainRect, font: mainFont, color: NSColor.white, alignment: .right)
-        if fiveHour != nil {
-            drawFloatingText(
-                "%",
-                in: percentRect,
-                font: percentFont,
-                color: NSColor.white.withAlphaComponent(0.82),
-                alignment: .right
-            )
+    private func drawCenteredFloatingText(
+        _ text: String,
+        in slot: NSRect,
+        font: NSFont,
+        color: NSColor,
+        alignment: NSTextAlignment = .left
+    ) {
+        let textSize = FloatingCapsuleLayout.measuredTextSize(text, font: font)
+        let textRect = NSRect(
+            x: slot.minX,
+            y: slot.midY - (textSize.height + 1) / 2,
+            width: slot.width,
+            height: textSize.height + 1
+        )
+        drawFloatingText(text, in: textRect, font: font, color: color, alignment: alignment)
+    }
+
+    private func drawDivider(in rect: NSRect) {
+        NSColor.white.withAlphaComponent(0.18).setFill()
+        NSBezierPath(rect: rect).fill()
+    }
+
+    private func drawQuotaTrack(in rect: NSRect, percent: Int?, color: NSColor, lineWidth: CGFloat) {
+        let (trackPath, perimeter) = roundedCapsulePath(in: rect)
+        NSColor.white.withAlphaComponent(0.16).setStroke()
+        trackPath.lineWidth = lineWidth
+        trackPath.lineCapStyle = .round
+        trackPath.lineJoinStyle = .round
+        trackPath.stroke()
+
+        guard let percent else {
+            return
         }
+        let clamped = max(0, min(100, percent))
+        guard clamped > 0 else {
+            return
+        }
+
+        let (progressPath, _) = roundedCapsulePath(in: rect)
+        color.setStroke()
+        progressPath.lineWidth = lineWidth
+        progressPath.lineCapStyle = .round
+        progressPath.lineJoinStyle = .round
+        if clamped < 100 {
+            let progressLength = perimeter * CGFloat(clamped) / 100
+            let dashPattern = [progressLength, max(0.001, perimeter - progressLength)]
+            dashPattern.withUnsafeBufferPointer { buffer in
+                progressPath.setLineDash(buffer.baseAddress, count: buffer.count, phase: 0)
+            }
+        }
+        progressPath.stroke()
+    }
+
+    private func roundedCapsulePath(in rect: NSRect) -> (path: NSBezierPath, perimeter: CGFloat) {
+        let radius = min(rect.width, rect.height) / 2
+        let straightWidth = max(0, rect.width - radius * 2)
+        let straightHeight = max(0, rect.height - radius * 2)
+        let perimeter = straightWidth * 2 + straightHeight * 2 + 2 * CGFloat.pi * radius
+        let path = NSBezierPath()
+        let start = NSPoint(x: rect.midX, y: rect.maxY)
+
+        path.move(to: start)
+        path.line(to: NSPoint(x: rect.maxX - radius, y: rect.maxY))
+        path.appendArc(
+            withCenter: NSPoint(x: rect.maxX - radius, y: rect.maxY - radius),
+            radius: radius,
+            startAngle: 90,
+            endAngle: 0,
+            clockwise: true
+        )
+        path.line(to: NSPoint(x: rect.maxX, y: rect.minY + radius))
+        path.appendArc(
+            withCenter: NSPoint(x: rect.maxX - radius, y: rect.minY + radius),
+            radius: radius,
+            startAngle: 0,
+            endAngle: -90,
+            clockwise: true
+        )
+        path.line(to: NSPoint(x: rect.minX + radius, y: rect.minY))
+        path.appendArc(
+            withCenter: NSPoint(x: rect.minX + radius, y: rect.minY + radius),
+            radius: radius,
+            startAngle: -90,
+            endAngle: -180,
+            clockwise: true
+        )
+        path.line(to: NSPoint(x: rect.minX, y: rect.maxY - radius))
+        path.appendArc(
+            withCenter: NSPoint(x: rect.minX + radius, y: rect.maxY - radius),
+            radius: radius,
+            startAngle: 180,
+            endAngle: 90,
+            clockwise: true
+        )
+        path.line(to: start)
+        path.close()
+        return (path, perimeter)
     }
 
     private func drawFloatingText(
@@ -1309,73 +1715,6 @@ final class FloatingBallView: NSView {
             in: rect,
             withAttributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
         )
-    }
-
-    private func fittedNumericFont(
-        for text: String,
-        preferredSize: CGFloat,
-        minimumSize: CGFloat,
-        weight: NSFont.Weight,
-        availableWidth: CGFloat
-    ) -> NSFont {
-        var size = preferredSize
-        while size >= minimumSize {
-            let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
-            let measuredSamples = floatingValueSamples.map { sample in
-                (sample, measuredTextSize(sample, font: font).width)
-            }
-            let measuredWidth = measuredSamples.first(where: { $0.0 == text })?.1
-                ?? measuredTextSize(text, font: font).width
-            if measuredWidth <= availableWidth {
-                return font
-            }
-            size -= 0.25
-        }
-        return NSFont.monospacedDigitSystemFont(ofSize: minimumSize, weight: weight)
-    }
-
-    private func measuredTextSize(_ text: String, font: NSFont) -> NSSize {
-        let rect = NSString(string: text).boundingRect(
-            with: NSSize(width: 1_000, height: 100),
-            options: [.usesFontLeading],
-            attributes: [.font: font]
-        )
-        return NSSize(width: ceil(rect.width), height: ceil(rect.height))
-    }
-
-    private var floatingValueSamples: [String] {
-        ["--", "0", "9", "59", "100"]
-    }
-
-    private func floatingNumberText(_ percent: Int?) -> String {
-        guard let percent else { return "--" }
-        return "\(max(0, min(100, percent)))"
-    }
-
-    private func drawRing(in rect: NSRect, percent: Int?, color: NSColor, width: CGFloat) {
-        let track = NSBezierPath(ovalIn: rect)
-        NSColor.white.withAlphaComponent(0.16).setStroke()
-        track.lineWidth = width
-        track.stroke()
-
-        guard let percent else {
-            return
-        }
-        let clamped = max(0, min(100, percent))
-        let start: CGFloat = 90
-        let end = start - CGFloat(clamped) / 100.0 * 360.0
-        let path = NSBezierPath()
-        path.appendArc(
-            withCenter: NSPoint(x: rect.midX, y: rect.midY),
-            radius: min(rect.width, rect.height) / 2,
-            startAngle: start,
-            endAngle: end,
-            clockwise: true
-        )
-        color.setStroke()
-        path.lineWidth = width
-        path.lineCapStyle = .round
-        path.stroke()
     }
 
     private func color(for percent: Int?) -> NSColor {
@@ -1458,7 +1797,11 @@ final class HoverInfoView: NSView {
     }
 }
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+if CommandLine.arguments.contains("--layout-check") {
+    FloatingCapsuleLayout.printValidation()
+} else {
+    let app = NSApplication.shared
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    app.run()
+}
