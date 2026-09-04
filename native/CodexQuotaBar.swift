@@ -946,7 +946,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showFloatingBall() {
         if floatingPanel == nil {
-            let size = NSSize(width: 54, height: 54)
+            let size = NSSize(width: 112, height: 54)
             let origin = floatingBallOrigin(size: size)
             let panel = NSPanel(
                 contentRect: NSRect(origin: origin, size: size),
@@ -993,10 +993,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func floatingBallOrigin(size: NSSize) -> NSPoint {
-        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let fallbackFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let savedOrigin = preferences.floatingBallX.flatMap { x in
+            preferences.floatingBallY.map { y in NSPoint(x: CGFloat(x), y: CGFloat(y)) }
+        }
+        let screenFrame = savedOrigin.flatMap { origin in
+            NSScreen.screens.first { $0.visibleFrame.contains(origin) }?.visibleFrame
+        } ?? fallbackFrame
         let defaultOrigin = NSPoint(x: screenFrame.maxX - size.width - 28, y: screenFrame.maxY - size.height - 80)
 
-        guard let savedX = preferences.floatingBallX, let savedY = preferences.floatingBallY else {
+        guard let savedOrigin else {
             return defaultOrigin
         }
 
@@ -1005,8 +1011,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let minY = screenFrame.minY + 8
         let maxY = screenFrame.maxY - size.height - 8
         return NSPoint(
-            x: min(max(CGFloat(savedX), minX), maxX),
-            y: min(max(CGFloat(savedY), minY), maxY)
+            x: min(max(savedOrigin.x, minX), maxX),
+            y: min(max(savedOrigin.y, minY), maxY)
         )
     }
 
@@ -1205,18 +1211,56 @@ final class FloatingBallView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        let bounds = self.bounds.insetBy(dx: 6, dy: 6)
+        let capsuleBounds = bounds.insetBy(dx: 6, dy: 6)
         NSColor.clear.setFill()
         dirtyRect.fill()
 
-        let background = NSBezierPath(ovalIn: bounds)
+        let background = NSBezierPath(
+            roundedRect: capsuleBounds,
+            xRadius: capsuleBounds.height / 2,
+            yRadius: capsuleBounds.height / 2
+        )
         NSColor.black.withAlphaComponent(0.58).setFill()
         background.fill()
 
         let fiveHour = snapshot?.fiveHourLeft
         let sevenDay = snapshot?.sevenDayLeft
-        drawRing(in: bounds.insetBy(dx: 7, dy: 7), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
-        drawRing(in: bounds.insetBy(dx: 16, dy: 16), percent: sevenDay, color: color(for: sevenDay), width: 3.2)
+        let ringBounds = NSRect(
+            x: capsuleBounds.minX,
+            y: capsuleBounds.minY,
+            width: capsuleBounds.height,
+            height: capsuleBounds.height
+        )
+        drawRing(in: ringBounds.insetBy(dx: 7, dy: 7), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
+        drawRing(in: ringBounds.insetBy(dx: 16, dy: 16), percent: sevenDay, color: color(for: sevenDay), width: 3.2)
+        drawQuotaRow(label: "5h", percent: fiveHour, y: 29, emphasized: true, in: capsuleBounds)
+        drawQuotaRow(label: "7d", percent: sevenDay, y: 11, emphasized: false, in: capsuleBounds)
+    }
+
+    private func drawQuotaRow(label: String, percent: Int?, y: CGFloat, emphasized: Bool, in capsuleBounds: NSRect) {
+        let labelFont = NSFont.systemFont(ofSize: emphasized ? 10.5 : 10, weight: emphasized ? .semibold : .medium)
+        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: emphasized ? 12.5 : 11.5, weight: emphasized ? .semibold : .medium)
+        let labelColor = NSColor.white.withAlphaComponent(emphasized ? 0.86 : 0.62)
+        let valueColor = NSColor.white.withAlphaComponent(emphasized ? 1.0 : 0.78)
+        let labelX = capsuleBounds.minX + capsuleBounds.height + 2
+        let valueX = labelX + 15
+        let valueWidth = capsuleBounds.maxX - valueX - 4
+        let valueStyle = NSMutableParagraphStyle()
+        valueStyle.alignment = .right
+
+        NSString(string: label).draw(
+            at: NSPoint(x: labelX, y: y),
+            withAttributes: [.font: labelFont, .foregroundColor: labelColor]
+        )
+        NSString(string: floatingPercentText(percent)).draw(
+            in: NSRect(x: valueX, y: y - 1, width: valueWidth, height: 17),
+            withAttributes: [.font: valueFont, .foregroundColor: valueColor, .paragraphStyle: valueStyle]
+        )
+    }
+
+    private func floatingPercentText(_ percent: Int?) -> String {
+        guard let percent else { return "--%" }
+        return "\(max(0, min(100, percent)))%"
     }
 
     private func drawRing(in rect: NSRect, percent: Int?, color: NSColor, width: CGFloat) {

@@ -98,6 +98,7 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 - `v0.2.1` restores quota access after the Codex desktop app moved into ChatGPT.
 - `v0.3.0` adds local quota history, usage trend estimates, and local data cleanup.
 - `v0.4.0` adds local Token summaries and refresh hardening while retaining the 5-hour and 7-day display.
+- `v0.4.1` changes the floating ball into a compact capsule with always-visible 5-hour and 7-day percentages.
 
 ## Safety Boundaries
 
