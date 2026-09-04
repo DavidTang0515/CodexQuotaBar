@@ -946,7 +946,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showFloatingBall() {
         if floatingPanel == nil {
-            let size = NSSize(width: 124, height: 54)
+            let size = NSSize(width: 108, height: 50)
             let origin = floatingBallOrigin(size: size)
             let panel = NSPanel(
                 contentRect: NSRect(origin: origin, size: size),
@@ -1231,8 +1231,19 @@ final class FloatingBallView: NSView {
             width: capsuleBounds.height,
             height: capsuleBounds.height
         )
-        drawRing(in: ringBounds.insetBy(dx: 7, dy: 7), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
-        drawRing(in: ringBounds.insetBy(dx: 16, dy: 16), percent: sevenDay, color: color(for: sevenDay), width: 3.2)
+        let ringScale = ringBounds.height / 42
+        drawRing(
+            in: ringBounds.insetBy(dx: 7 * ringScale, dy: 7 * ringScale),
+            percent: fiveHour,
+            color: color(for: fiveHour),
+            width: 4.5 * ringScale
+        )
+        drawRing(
+            in: ringBounds.insetBy(dx: 16 * ringScale, dy: 16 * ringScale),
+            percent: sevenDay,
+            color: color(for: sevenDay),
+            width: 3.2 * ringScale
+        )
 
         let contentBounds = NSRect(
             x: ringBounds.maxX + 4,
@@ -1241,35 +1252,27 @@ final class FloatingBallView: NSView {
             height: capsuleBounds.height - 6
         )
 
-        drawQuotaValues(fiveHour: fiveHour, sevenDay: sevenDay, in: contentBounds)
+        drawQuotaValues(fiveHour: fiveHour, in: contentBounds)
     }
 
-    private func drawQuotaValues(fiveHour: Int?, sevenDay: Int?, in contentBounds: NSRect) {
+    private func drawQuotaValues(fiveHour: Int?, in contentBounds: NSRect) {
         let percentFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
         let percentSize = measuredTextSize("%", font: percentFont)
         let gap: CGFloat = 3
         let mainValueWidth = contentBounds.width - percentSize.width - gap
+        let mainText = floatingNumberText(fiveHour)
         let mainFont = fittedNumericFont(
-            preferredSize: 21,
-            minimumSize: 17,
+            for: mainText,
+            preferredSize: 23,
+            minimumSize: 18,
             weight: .semibold,
             availableWidth: mainValueWidth
         )
-        let sevenDayFont = fittedNumericFont(
-            preferredSize: 13.5,
-            minimumSize: 12,
-            weight: .medium,
-            availableWidth: contentBounds.width
-        )
-        let mainText = floatingNumberText(fiveHour)
-        let sevenDayText = floatingNumberText(sevenDay)
         let mainSize = measuredTextSize(mainText, font: mainFont)
-        let sevenDaySize = measuredTextSize(sevenDayText, font: sevenDayFont)
         let mainHeight = mainSize.height + 2
-        let sevenDayHeight = sevenDaySize.height + 2
         let mainRect = NSRect(
             x: contentBounds.minX,
-            y: contentBounds.maxY - mainHeight,
+            y: contentBounds.midY - mainHeight / 2,
             width: mainValueWidth,
             height: mainHeight
         )
@@ -1278,15 +1281,6 @@ final class FloatingBallView: NSView {
             y: mainRect.maxY - percentSize.height,
             width: percentSize.width,
             height: percentSize.height + 1
-        )
-        let sevenDayWidth = floatingValueSamples
-            .map { measuredTextSize($0, font: sevenDayFont).width }
-            .max() ?? sevenDaySize.width
-        let sevenDayRect = NSRect(
-            x: contentBounds.maxX - sevenDayWidth,
-            y: contentBounds.minY,
-            width: sevenDayWidth,
-            height: sevenDayHeight
         )
 
         drawFloatingText(mainText, in: mainRect, font: mainFont, color: NSColor.white, alignment: .right)
@@ -1299,13 +1293,6 @@ final class FloatingBallView: NSView {
                 alignment: .right
             )
         }
-        drawFloatingText(
-            sevenDayText,
-            in: sevenDayRect,
-            font: sevenDayFont,
-            color: NSColor.white.withAlphaComponent(0.64),
-            alignment: .right
-        )
     }
 
     private func drawFloatingText(
@@ -1325,6 +1312,7 @@ final class FloatingBallView: NSView {
     }
 
     private func fittedNumericFont(
+        for text: String,
         preferredSize: CGFloat,
         minimumSize: CGFloat,
         weight: NSFont.Weight,
@@ -1333,10 +1321,12 @@ final class FloatingBallView: NSView {
         var size = preferredSize
         while size >= minimumSize {
             let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
-            let widestSample = floatingValueSamples
-                .map { measuredTextSize($0, font: font).width }
-                .max() ?? 0
-            if widestSample <= availableWidth {
+            let measuredSamples = floatingValueSamples.map { sample in
+                (sample, measuredTextSize(sample, font: font).width)
+            }
+            let measuredWidth = measuredSamples.first(where: { $0.0 == text })?.1
+                ?? measuredTextSize(text, font: font).width
+            if measuredWidth <= availableWidth {
                 return font
             }
             size -= 0.25
