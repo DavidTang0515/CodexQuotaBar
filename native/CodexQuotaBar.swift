@@ -1234,101 +1234,97 @@ final class FloatingBallView: NSView {
         drawRing(in: ringBounds.insetBy(dx: 7, dy: 7), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
         drawRing(in: ringBounds.insetBy(dx: 16, dy: 16), percent: sevenDay, color: color(for: sevenDay), width: 3.2)
 
-        let contentStartX = ringBounds.maxX + 4
-        let valueRight = capsuleBounds.maxX - 8
-        let fiveHourLabelFont = quotaLabelFont(emphasized: true)
-        let sevenDayLabelFont = quotaLabelFont(emphasized: false)
-        let labelColumnWidth = max(
-            measuredTextSize("5h", font: fiveHourLabelFont).width,
-            measuredTextSize("7d", font: sevenDayLabelFont).width
+        let contentBounds = NSRect(
+            x: ringBounds.maxX + 4,
+            y: capsuleBounds.minY + 3,
+            width: capsuleBounds.maxX - 8 - (ringBounds.maxX + 4),
+            height: capsuleBounds.height - 6
         )
-        let valueX = contentStartX + labelColumnWidth + 4
-        let valueWidth = valueRight - valueX
-        let fiveHourValueFont = fittedValueFont(
-            preferredSize: 12.5,
-            minimumSize: 11.5,
+
+        drawQuotaValues(fiveHour: fiveHour, sevenDay: sevenDay, in: contentBounds)
+    }
+
+    private func drawQuotaValues(fiveHour: Int?, sevenDay: Int?, in contentBounds: NSRect) {
+        let percentFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+        let percentSize = measuredTextSize("%", font: percentFont)
+        let gap: CGFloat = 3
+        let mainValueWidth = contentBounds.width - percentSize.width - gap
+        let mainFont = fittedNumericFont(
+            preferredSize: 21,
+            minimumSize: 17,
             weight: .semibold,
-            availableWidth: valueWidth
+            availableWidth: mainValueWidth
         )
-        let sevenDayValueFont = fittedValueFont(
-            preferredSize: 11.5,
-            minimumSize: 10.5,
+        let sevenDayFont = fittedNumericFont(
+            preferredSize: 13.5,
+            minimumSize: 12,
             weight: .medium,
-            availableWidth: valueWidth
+            availableWidth: contentBounds.width
+        )
+        let mainText = floatingNumberText(fiveHour)
+        let sevenDayText = floatingNumberText(sevenDay)
+        let mainSize = measuredTextSize(mainText, font: mainFont)
+        let sevenDaySize = measuredTextSize(sevenDayText, font: sevenDayFont)
+        let mainHeight = mainSize.height + 2
+        let sevenDayHeight = sevenDaySize.height + 2
+        let mainRect = NSRect(
+            x: contentBounds.minX,
+            y: contentBounds.maxY - mainHeight,
+            width: mainValueWidth,
+            height: mainHeight
+        )
+        let percentRect = NSRect(
+            x: contentBounds.maxX - percentSize.width,
+            y: mainRect.maxY - percentSize.height,
+            width: percentSize.width,
+            height: percentSize.height + 1
+        )
+        let sevenDayWidth = floatingValueSamples
+            .map { measuredTextSize($0, font: sevenDayFont).width }
+            .max() ?? sevenDaySize.width
+        let sevenDayRect = NSRect(
+            x: contentBounds.maxX - sevenDayWidth,
+            y: contentBounds.minY,
+            width: sevenDayWidth,
+            height: sevenDayHeight
         )
 
-        drawQuotaRow(
-            label: "5h",
-            percent: fiveHour,
-            centerY: capsuleBounds.midY + 9,
-            emphasized: true,
-            labelX: contentStartX,
-            labelColumnWidth: labelColumnWidth,
-            valueX: valueX,
-            valueWidth: valueWidth,
-            valueFont: fiveHourValueFont
-        )
-        drawQuotaRow(
-            label: "7d",
-            percent: sevenDay,
-            centerY: capsuleBounds.midY - 9,
-            emphasized: false,
-            labelX: contentStartX,
-            labelColumnWidth: labelColumnWidth,
-            valueX: valueX,
-            valueWidth: valueWidth,
-            valueFont: sevenDayValueFont
+        drawFloatingText(mainText, in: mainRect, font: mainFont, color: NSColor.white, alignment: .right)
+        if fiveHour != nil {
+            drawFloatingText(
+                "%",
+                in: percentRect,
+                font: percentFont,
+                color: NSColor.white.withAlphaComponent(0.82),
+                alignment: .right
+            )
+        }
+        drawFloatingText(
+            sevenDayText,
+            in: sevenDayRect,
+            font: sevenDayFont,
+            color: NSColor.white.withAlphaComponent(0.64),
+            alignment: .right
         )
     }
 
-    private func drawQuotaRow(
-        label: String,
-        percent: Int?,
-        centerY: CGFloat,
-        emphasized: Bool,
-        labelX: CGFloat,
-        labelColumnWidth: CGFloat,
-        valueX: CGFloat,
-        valueWidth: CGFloat,
-        valueFont: NSFont
+    private func drawFloatingText(
+        _ text: String,
+        in rect: NSRect,
+        font: NSFont,
+        color: NSColor,
+        alignment: NSTextAlignment
     ) {
-        let labelFont = quotaLabelFont(emphasized: emphasized)
-        let labelColor = NSColor.white.withAlphaComponent(emphasized ? 0.86 : 0.62)
-        let valueColor = NSColor.white.withAlphaComponent(emphasized ? 1.0 : 0.78)
-        let labelSize = measuredTextSize(label, font: labelFont)
-        let valueText = floatingPercentText(percent)
-        let valueSize = measuredTextSize(valueText, font: valueFont)
-        let labelHeight = labelSize.height + 2
-        let valueHeight = valueSize.height + 2
-        let valueStyle = NSMutableParagraphStyle()
-        valueStyle.alignment = .right
-        valueStyle.lineBreakMode = .byClipping
-
-        NSString(string: label).draw(
-            in: NSRect(
-                x: labelX,
-                y: centerY - labelHeight / 2,
-                width: labelColumnWidth,
-                height: labelHeight
-            ),
-            withAttributes: [.font: labelFont, .foregroundColor: labelColor]
-        )
-        NSString(string: valueText).draw(
-            in: NSRect(
-                x: valueX,
-                y: centerY - valueHeight / 2,
-                width: valueWidth,
-                height: valueHeight
-            ),
-            withAttributes: [.font: valueFont, .foregroundColor: valueColor, .paragraphStyle: valueStyle]
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = alignment
+        paragraph.lineBreakMode = .byClipping
+        NSString(string: text).draw(
+            in: rect,
+            withAttributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
         )
     }
 
-    private func quotaLabelFont(emphasized: Bool) -> NSFont {
-        NSFont.systemFont(ofSize: emphasized ? 10.5 : 10, weight: emphasized ? .semibold : .medium)
-    }
-
-    private func fittedValueFont(
+    private func fittedNumericFont(
         preferredSize: CGFloat,
         minimumSize: CGFloat,
         weight: NSFont.Weight,
@@ -1337,7 +1333,7 @@ final class FloatingBallView: NSView {
         var size = preferredSize
         while size >= minimumSize {
             let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
-            let widestSample = floatingPercentSamples
+            let widestSample = floatingValueSamples
                 .map { measuredTextSize($0, font: font).width }
                 .max() ?? 0
             if widestSample <= availableWidth {
@@ -1357,13 +1353,13 @@ final class FloatingBallView: NSView {
         return NSSize(width: ceil(rect.width), height: ceil(rect.height))
     }
 
-    private var floatingPercentSamples: [String] {
-        ["--%", "0%", "9%", "59%", "100%"]
+    private var floatingValueSamples: [String] {
+        ["--", "0", "9", "59", "100"]
     }
 
-    private func floatingPercentText(_ percent: Int?) -> String {
-        guard let percent else { return "--%" }
-        return "\(max(0, min(100, percent)))%"
+    private func floatingNumberText(_ percent: Int?) -> String {
+        guard let percent else { return "--" }
+        return "\(max(0, min(100, percent)))"
     }
 
     private func drawRing(in rect: NSRect, percent: Int?, color: NSColor, width: CGFloat) {
