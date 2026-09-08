@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="CodexQuotaBar"
-APP_VERSION="0.4.0"
+APP_VERSION="0.4.1"
 APP_BUNDLE="$ROOT_DIR/native/build/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
@@ -16,6 +16,7 @@ mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 mkdir -p "$MODULE_CACHE_DIR"
 
 swiftc "$ROOT_DIR/native/CodexQuotaBar.swift" \
+  "$ROOT_DIR/native/main.swift" \
   -target arm64-apple-macosx13.0 \
   -module-cache-path "$MODULE_CACHE_DIR" \
   -o "$APP_BINARY" \

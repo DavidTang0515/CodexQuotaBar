@@ -368,26 +368,255 @@ final class QuotaHistoryStore {
     }
 }
 
+final class MenuQuotaRowView: NSView {
+    static let menuWidth: CGFloat = 300
+    static let menuHeight: CGFloat = 24
+
+    private let period: String
+    private let periodLabel: NSTextField
+    private let valueLabel = NSTextField(labelWithString: "--%")
+    private let resetLabel = NSTextField(labelWithString: "reset --")
+
+    init(period: String) {
+        self.period = period
+        periodLabel = NSTextField(labelWithString: period)
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.menuWidth, height: Self.menuHeight))
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("\(period) quota")
+        setAccessibilityValue("Unknown, reset --")
+
+        periodLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        valueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        resetLabel.font = NSFont.systemFont(ofSize: 11)
+        resetLabel.alignment = .left
+        resetLabel.lineBreakMode = .byTruncatingTail
+        resetLabel.maximumNumberOfLines = 1
+        resetLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        resetLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        for field in [periodLabel, valueLabel, resetLabel] {
+            field.isBordered = false
+            field.drawsBackground = false
+            field.isEditable = false
+            field.isSelectable = false
+            field.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(field)
+        }
+
+        NSLayoutConstraint.activate([
+            periodLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            periodLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            periodLabel.widthAnchor.constraint(equalToConstant: 28),
+            valueLabel.leadingAnchor.constraint(equalTo: periodLabel.trailingAnchor, constant: 7),
+            valueLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            valueLabel.widthAnchor.constraint(equalToConstant: 54),
+            resetLabel.leadingAnchor.constraint(equalTo: valueLabel.trailingAnchor, constant: 8),
+            resetLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            resetLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.menuWidth, height: Self.menuHeight)
+    }
+
+    func update(remaining: Int?, reset: String?) {
+        let resetText = reset ?? "--"
+        guard let remaining else {
+            valueLabel.stringValue = "--%"
+            valueLabel.textColor = NSColor(calibratedRed: 0.55, green: 0.69, blue: 0.79, alpha: 0.75)
+            resetLabel.stringValue = "reset \(resetText)"
+            resetLabel.textColor = .secondaryLabelColor
+            setAccessibilityValue("\(period) quota unknown, reset \(resetText)")
+            return
+        }
+
+        let clamped = max(0, min(100, remaining))
+        valueLabel.stringValue = "\(clamped)%"
+        valueLabel.textColor = MenuQuotaRowView.color(for: clamped)
+        resetLabel.stringValue = "reset \(resetText)"
+        resetLabel.textColor = .secondaryLabelColor
+        setAccessibilityValue("\(period) quota \(clamped) percent, reset \(resetText)")
+    }
+
+    private static func color(for percent: Int) -> NSColor {
+        if percent > 60 {
+            return NSColor(calibratedRed: 0.28, green: 0.78, blue: 0.48, alpha: 1.0)
+        }
+        if percent >= 20 {
+            return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.28, alpha: 1.0)
+        }
+        return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
+    }
+}
+
+final class MenuPeriodControlView: NSView {
+    private static let menuWidth: CGFloat = 320
+    private static let menuHeight: CGFloat = 24
+
+    private let button: NSButton
+    private let shortcutLabel = NSTextField(labelWithString: "⌘T")
+    var onCycle: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        button = NSButton(title: "Period: 7 days", target: nil, action: nil)
+        super.init(frame: frameRect)
+
+        button.target = self
+        button.action = #selector(cycle)
+        button.bezelStyle = .inline
+        button.alignment = .left
+        button.keyEquivalent = "t"
+        button.keyEquivalentModifierMask = [.command]
+        button.setAccessibilityElement(true)
+        button.setAccessibilityLabel("Usage period")
+        button.setAccessibilityHelp("Cycle Today, 7 days, 30 days, This month, and All")
+        button.translatesAutoresizingMaskIntoConstraints = false
+        shortcutLabel.font = NSFont.systemFont(ofSize: 11)
+        shortcutLabel.textColor = .secondaryLabelColor
+        shortcutLabel.alignment = .right
+        shortcutLabel.isBordered = false
+        shortcutLabel.drawsBackground = false
+        shortcutLabel.isEditable = false
+        shortcutLabel.isSelectable = false
+        shortcutLabel.setAccessibilityElement(false)
+        shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        addSubview(shortcutLabel)
+
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: shortcutLabel.leadingAnchor, constant: -8),
+            button.centerYAnchor.constraint(equalTo: centerYAnchor),
+            shortcutLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            shortcutLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            shortcutLabel.widthAnchor.constraint(equalToConstant: 32)
+        ])
+    }
+
+    convenience init() {
+        self.init(frame: NSRect(x: 0, y: 0, width: Self.menuWidth, height: Self.menuHeight))
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.menuWidth, height: Self.menuHeight)
+    }
+
+    func update(title: String) {
+        button.title = title
+    }
+
+    @objc private func cycle() {
+        onCycle?()
+    }
+}
+
+final class MenuDetailRowView: NSView {
+    static let menuWidth: CGFloat = 320
+    static let menuHeight: CGFloat = 22
+
+    private let label: NSTextField
+
+    init(text: String = "") {
+        label = NSTextField(labelWithString: text)
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.menuWidth, height: Self.menuHeight))
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("Usage detail")
+        setAccessibilityValue(text)
+
+        label.font = NSFont.systemFont(ofSize: 12)
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        label.isBordered = false
+        label.drawsBackground = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.setAccessibilityElement(false)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.menuWidth, height: Self.menuHeight)
+    }
+
+    func update(text: String) {
+        label.stringValue = text
+        setAccessibilityValue(text)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
+    private let usageMenu = NSMenu()
+    private let settingsMenu = NSMenu()
     private let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
     private let floatingBallItem = NSMenuItem(title: "Show Floating Ball", action: #selector(toggleFloatingBall), keyEquivalent: "b")
     private let openAtLoginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleOpenAtLogin), keyEquivalent: "l")
-    private let fiveHourItem = NSMenuItem(title: "5h: --", action: nil, keyEquivalent: "")
-    private let sevenDayItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
-    private let resetItem = NSMenuItem(title: "Reset: --", action: nil, keyEquivalent: "")
-    private let updatedItem = NSMenuItem(title: "Last refresh: --", action: nil, keyEquivalent: "")
+    private let fiveHourRow = MenuQuotaRowView(period: "5h")
+    private let sevenDayRow = MenuQuotaRowView(period: "7d")
+    private lazy var fiveHourItem: NSMenuItem = {
+        let item = NSMenuItem()
+        item.view = fiveHourRow
+        return item
+    }()
+    private lazy var sevenDayItem: NSMenuItem = {
+        let item = NSMenuItem()
+        item.view = sevenDayRow
+        return item
+    }()
     private let trendHeaderItem = NSMenuItem(title: "Usage trend", action: nil, keyEquivalent: "")
-    private let fiveHourTrendItem = NSMenuItem(title: "5h: --", action: nil, keyEquivalent: "")
-    private let sevenDayTrendItem = NSMenuItem(title: "7d: --", action: nil, keyEquivalent: "")
+    private let fiveHourTrendItem = NSMenuItem(title: "5h current rate: --", action: nil, keyEquivalent: "")
+    private let sevenDayTrendItem = NSMenuItem(title: "7d current rate: --", action: nil, keyEquivalent: "")
     private let projectedItem = NSMenuItem(title: "Projected 5h: --", action: nil, keyEquivalent: "")
-    private let tokenHeaderItem = NSMenuItem(title: "Local Token", action: nil, keyEquivalent: "")
-    private let tokenRangeItem = NSMenuItem(title: "Period: 7 days", action: #selector(cycleUsageRange), keyEquivalent: "t")
+    private let periodControlView = MenuPeriodControlView()
+    private lazy var tokenRangeItem: NSMenuItem = {
+        let item = NSMenuItem(title: "Period", action: nil, keyEquivalent: "")
+        item.view = periodControlView
+        return item
+    }()
     private let tokenTotalItem = NSMenuItem(title: "Token: --", action: nil, keyEquivalent: "")
-    private let tokenCompositionItem = NSMenuItem(title: "Input -- · Cached -- · Output --", action: nil, keyEquivalent: "")
+    private let inputTokenItem = NSMenuItem(title: "Input --", action: nil, keyEquivalent: "")
+    private let cachedTokenItem = NSMenuItem(title: "Cached --", action: nil, keyEquivalent: "")
+    private let outputTokenItem = NSMenuItem(title: "Output --", action: nil, keyEquivalent: "")
+    private let tokenTotalView = MenuDetailRowView()
+    private let inputTokenView = MenuDetailRowView()
+    private let cachedTokenView = MenuDetailRowView()
+    private let outputTokenView = MenuDetailRowView()
+    private let fiveHourTrendView = MenuDetailRowView()
+    private let sevenDayTrendView = MenuDetailRowView()
+    private let projectedView = MenuDetailRowView()
+    private let usageStatisticsItem = NSMenuItem(title: "Usage statistics", action: nil, keyEquivalent: "")
+    private let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
     private let clearLocalDataItem = NSMenuItem(title: "Clear Local Data...", action: #selector(clearLocalData), keyEquivalent: "")
     private let stateItem = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
+    private lazy var openChatGPTItem = NSMenuItem(title: "Open Codex", action: #selector(openChatGPT), keyEquivalent: "o")
+    private lazy var quitItem = NSMenuItem(title: "Quit CodexQuotaBar", action: #selector(quit), keyEquivalent: "q")
     private let historyStore = QuotaHistoryStore()
     private var timer: Timer?
     private var retryTimer: Timer?
@@ -434,41 +663,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func configureMenu() {
         refreshItem.target = self
-        menu.addItem(stateItem)
-        menu.addItem(NSMenuItem.separator())
+        usageStatisticsItem.submenu = usageMenu
+        settingsItem.submenu = settingsMenu
+        menu.minimumWidth = MenuQuotaRowView.menuWidth
+        usageMenu.minimumWidth = MenuDetailRowView.menuWidth
+        settingsMenu.minimumWidth = 220
+
+        tokenTotalItem.view = tokenTotalView
+        inputTokenItem.view = inputTokenView
+        cachedTokenItem.view = cachedTokenView
+        outputTokenItem.view = outputTokenView
+        fiveHourTrendItem.view = fiveHourTrendView
+        sevenDayTrendItem.view = sevenDayTrendView
+        projectedItem.view = projectedView
+
         menu.addItem(fiveHourItem)
         menu.addItem(sevenDayItem)
-        menu.addItem(resetItem)
-        menu.addItem(updatedItem)
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(trendHeaderItem)
-        menu.addItem(fiveHourTrendItem)
-        menu.addItem(sevenDayTrendItem)
-        menu.addItem(projectedItem)
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(tokenHeaderItem)
-        tokenRangeItem.target = self
-        menu.addItem(tokenRangeItem)
-        menu.addItem(tokenTotalItem)
-        menu.addItem(tokenCompositionItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(refreshItem)
+        menu.addItem(usageStatisticsItem)
+        menu.addItem(settingsItem)
+        menu.addItem(NSMenuItem.separator())
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        fiveHourItem.title = "5h quota"
+        fiveHourItem.setAccessibilityLabel("5-hour quota")
+        sevenDayItem.title = "7d quota"
+        sevenDayItem.setAccessibilityLabel("7-day quota")
+
+        periodControlView.onCycle = { [weak self] in
+            self?.cycleUsageRange()
+        }
+        usageMenu.addItem(tokenRangeItem)
+        usageMenu.addItem(tokenTotalItem)
+        usageMenu.addItem(inputTokenItem)
+        usageMenu.addItem(cachedTokenItem)
+        usageMenu.addItem(outputTokenItem)
+        usageMenu.addItem(NSMenuItem.separator())
+        usageMenu.addItem(trendHeaderItem)
+        usageMenu.addItem(fiveHourTrendItem)
+        usageMenu.addItem(sevenDayTrendItem)
+        usageMenu.addItem(projectedItem)
+
         floatingBallItem.target = self
-        menu.addItem(floatingBallItem)
+        settingsMenu.addItem(floatingBallItem)
+        openChatGPTItem.target = self
+        settingsMenu.addItem(openChatGPTItem)
         openAtLoginItem.target = self
         updateOpenAtLoginMenuItem()
-        menu.addItem(openAtLoginItem)
-
-        let openChatGPT = NSMenuItem(title: "Open ChatGPT", action: #selector(openChatGPT), keyEquivalent: "o")
-        openChatGPT.target = self
-        menu.addItem(openChatGPT)
-
-        menu.addItem(NSMenuItem.separator())
+        settingsMenu.addItem(openAtLoginItem)
+        settingsMenu.addItem(NSMenuItem.separator())
         clearLocalDataItem.target = self
-        menu.addItem(clearLocalDataItem)
-        let quit = NSMenuItem(title: "Quit CodexQuotaBar", action: #selector(quit), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
+        settingsMenu.addItem(clearLocalDataItem)
 
         statusItem.menu = menu
         statusItem.button?.toolTip = "CodexQuotaBar"
@@ -679,17 +926,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func applyDisplayedSnapshot(_ snapshot: QuotaSnapshot?) {
         updateButton(snapshot: snapshot, loading: snapshot == nil && latestSnapshot == nil)
         floatingView?.snapshot = snapshot
-        fiveHourItem.title = "5h: \(percentText(snapshot?.fiveHourLeft))"
-        sevenDayItem.title = "7d: \(percentText(snapshot?.sevenDayLeft))"
-        resetItem.title = "Reset: 5h \(shortTime(snapshot?.fiveHourReset)) / 7d \(shortTime(snapshot?.sevenDayReset))"
-        updatedItem.title = "Last refresh: \(shortTime(snapshot?.updatedAt))"
+        fiveHourRow.update(remaining: snapshot?.fiveHourLeft, reset: shortDateTime(snapshot?.fiveHourReset))
+        sevenDayRow.update(remaining: snapshot?.sevenDayLeft, reset: shortDateTime(snapshot?.sevenDayReset))
     }
 
     private func updateTrendItems() {
         let trends = historyStore.trends()
-        fiveHourTrendItem.title = "5h: \(rateText(trends.fiveHour.currentRate, unit: "h")) \(comparisonText(current: trends.fiveHour.currentRate, previous: trends.fiveHour.previousRate))"
-        sevenDayTrendItem.title = "7d: \(rateText(trends.sevenDay.currentRate, unit: "day")) \(comparisonText(current: trends.sevenDay.currentRate, previous: trends.sevenDay.previousRate))"
+        let fiveHourText = menuTrendText(period: "5h", metric: trends.fiveHour, unit: "h")
+        let sevenDayText = menuTrendText(period: "7d", metric: trends.sevenDay, unit: "day")
+        fiveHourTrendItem.title = fiveHourText
+        sevenDayTrendItem.title = sevenDayText
+        fiveHourTrendView.update(text: fiveHourText)
+        sevenDayTrendView.update(text: sevenDayText)
         projectedItem.title = trends.projection
+        projectedView.update(text: trends.projection)
+        usageMenu.update()
     }
 
     private var selectedUsageRange: String {
@@ -699,14 +950,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func updateUsageItems() {
         let label = usageRangeLabel(selectedUsageRange)
-        tokenRangeItem.title = "Period: \(label)"
+        periodControlView.update(title: "Period: \(label)")
         guard let usage = latestUsage, usage.ok, let summary = usage.ranges[selectedUsageRange] else {
-            tokenTotalItem.title = isUsageRefreshing ? "Token: Scanning local records..." : "Token: --"
-            tokenCompositionItem.title = "Input -- · Cached -- · Output --"
+            let tokenText = isUsageRefreshing ? "Token: Scanning local records..." : "Token --"
+            tokenTotalItem.title = tokenText
+            inputTokenItem.title = "Input --"
+            cachedTokenItem.title = "Cached --"
+            outputTokenItem.title = "Output --"
+            tokenTotalView.update(text: tokenText)
+            inputTokenView.update(text: "Input --")
+            cachedTokenView.update(text: "Cached --")
+            outputTokenView.update(text: "Output --")
+            usageMenu.update()
             return
         }
-        tokenTotalItem.title = "Token: \(formatTokens(summary.totalTokens))"
-        tokenCompositionItem.title = "Input \(formatTokens(summary.inputTokens)) · Cached \(formatTokens(summary.cachedInputTokens)) · Output \(formatTokens(summary.outputTokens))"
+        let tokenText = "Token \(formatTokens(summary.totalTokens))"
+        let inputText = "Input \(formatTokens(summary.inputTokens))"
+        let cachedText = "Cached \(formatTokens(summary.cachedInputTokens))"
+        let outputText = "Output \(formatTokens(summary.outputTokens))"
+        tokenTotalItem.title = tokenText
+        inputTokenItem.title = inputText
+        cachedTokenItem.title = cachedText
+        outputTokenItem.title = outputText
+        tokenTotalView.update(text: tokenText)
+        inputTokenView.update(text: inputText)
+        cachedTokenView.update(text: cachedText)
+        outputTokenView.update(text: outputText)
+        usageMenu.update()
     }
 
     @objc private func cycleUsageRange() {
@@ -734,6 +1004,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if number >= 1_000_000 { return String(format: "%.1fM", number / 1_000_000) }
         if number >= 1_000 { return String(format: "%.1fK", number / 1_000) }
         return "\(value)"
+    }
+
+    private func menuTrendText(period: String, metric: TrendMetric, unit: String) -> String {
+        "\(period) \(menuRateText(metric.currentRate, unit: unit)) · \(menuComparisonText(current: metric.currentRate, previous: metric.previousRate))"
+    }
+
+    private func menuRateText(_ value: Double?, unit: String) -> String {
+        guard let value else {
+            return "rate --"
+        }
+        return String(format: "rate -%.1f%%/%@", value, unit)
+    }
+
+    private func menuComparisonText(current: Double?, previous: Double?) -> String {
+        guard let current, let previous else {
+            return "prev --"
+        }
+        let delta = current - previous
+        if abs(delta) < 0.05 {
+            return "prev flat"
+        }
+        return String(format: "prev %@%.1f", delta > 0 ? "+" : "", delta)
     }
 
     private func scheduleRetryIfNeeded() {
@@ -1205,18 +1497,19 @@ final class FloatingBallView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        let bounds = self.bounds.insetBy(dx: 6, dy: 6)
+        let bounds = self.bounds
         NSColor.clear.setFill()
         dirtyRect.fill()
 
-        let background = NSBezierPath(ovalIn: bounds)
+        let background = NSBezierPath(ovalIn: bounds.insetBy(dx: 6, dy: 6))
         NSColor.black.withAlphaComponent(0.58).setFill()
         background.fill()
 
-        let fiveHour = snapshot?.fiveHourLeft
-        let sevenDay = snapshot?.sevenDayLeft
-        drawRing(in: bounds.insetBy(dx: 7, dy: 7), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
-        drawRing(in: bounds.insetBy(dx: 16, dy: 16), percent: sevenDay, color: color(for: sevenDay), width: 3.2)
+        let fiveHour = snapshot?.ok == true ? snapshot?.fiveHourLeft : nil
+        let sevenDay = snapshot?.ok == true ? snapshot?.sevenDayLeft : nil
+        drawRing(in: bounds.insetBy(dx: 9.25, dy: 9.25), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
+        drawRing(in: bounds.insetBy(dx: 14, dy: 14), percent: sevenDay, color: color(for: sevenDay), width: 3.2)
+        drawCenterValue(fiveHour)
     }
 
     private func drawRing(in rect: NSRect, percent: Int?, color: NSColor, width: CGFloat) {
@@ -1229,6 +1522,16 @@ final class FloatingBallView: NSView {
             return
         }
         let clamped = max(0, min(100, percent))
+        if clamped == 100 {
+            color.setStroke()
+            let full = NSBezierPath(ovalIn: rect)
+            full.lineWidth = width
+            full.stroke()
+            return
+        }
+        guard clamped > 0 else {
+            return
+        }
         let start: CGFloat = 90
         let end = start - CGFloat(clamped) / 100.0 * 360.0
         let path = NSBezierPath()
@@ -1243,6 +1546,20 @@ final class FloatingBallView: NSView {
         path.lineWidth = width
         path.lineCapStyle = .round
         path.stroke()
+    }
+
+    private func drawCenterValue(_ percent: Int?) {
+        let text = percent.map { "\(max(0, min(100, $0)))" } ?? "--"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 10.0, weight: .semibold),
+            .foregroundColor: percent == nil ? color(for: nil) : NSColor.white
+        ]
+        let textSize = NSString(string: text).size(withAttributes: attributes)
+        let origin = NSPoint(
+            x: bounds.midX - textSize.width / 2,
+            y: bounds.midY - textSize.height / 2
+        )
+        NSString(string: text).draw(at: origin, withAttributes: attributes)
     }
 
     private func color(for percent: Int?) -> NSColor {
@@ -1261,11 +1578,15 @@ final class FloatingBallView: NSView {
 }
 
 final class HoverInfoView: NSView {
-    private static let font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .semibold)
-    private static let horizontalPadding: CGFloat = 12
-    private static let verticalPadding: CGFloat = 10
-    private static let lineHeight: CGFloat = 18
-    private static let maximumTextWidth: CGFloat = 280
+    private static let panelSize = NSSize(width: 252, height: 68)
+    private static let periodFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    private static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+    private static let resetLabelFont = NSFont.systemFont(ofSize: 10.5)
+    private static let resetValueFont = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
+    private static let periodRect = NSRect(x: 13, y: 0, width: 24, height: 20)
+    private static let valueRect = NSRect(x: 42, y: 0, width: 42, height: 20)
+    private static let resetLabelRect = NSRect(x: 91, y: 1, width: 34, height: 18)
+    private static let resetValueRect = NSRect(x: 132, y: 1, width: 107, height: 18)
 
     private var text: String
 
@@ -1291,41 +1612,92 @@ final class HoverInfoView: NSView {
         let bubble = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8)
         NSColor.black.withAlphaComponent(0.78).setFill()
         bubble.fill()
+        NSColor.white.withAlphaComponent(0.10).setStroke()
+        bubble.lineWidth = 1
+        bubble.stroke()
 
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.minimumLineHeight = Self.lineHeight
-        paragraph.maximumLineHeight = Self.lineHeight
-        paragraph.lineBreakMode = .byCharWrapping
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.font,
-            .foregroundColor: NSColor.white,
-            .paragraphStyle: paragraph
-        ]
-        NSString(string: text).draw(in: bounds.insetBy(dx: Self.horizontalPadding, dy: Self.verticalPadding), withAttributes: attributes)
+        for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).prefix(2).enumerated() {
+            let row = Self.parse(String(line))
+            let rowY: CGFloat = index == 0 ? 35 : 10
+            draw(row.period, in: Self.periodRect.offsetBy(dx: 0, dy: rowY), font: Self.periodFont, color: .white)
+            draw(row.value, in: Self.valueRect.offsetBy(dx: 0, dy: rowY), font: Self.valueFont, color: Self.color(for: row.percent), alignment: .right)
+            draw("reset", in: Self.resetLabelRect.offsetBy(dx: 0, dy: rowY), font: Self.resetLabelFont, color: .white.withAlphaComponent(0.70))
+            draw(row.reset, in: Self.resetValueRect.offsetBy(dx: 0, dy: rowY), font: Self.resetValueFont, color: .white.withAlphaComponent(0.86))
+        }
     }
 
     static func size(for text: String) -> NSSize {
+        panelSize
+    }
+
+    private func draw(_ value: String, in rect: NSRect, font: NSFont, color: NSColor, alignment: NSTextAlignment = .left) {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.minimumLineHeight = Self.lineHeight
-        paragraph.maximumLineHeight = Self.lineHeight
-        paragraph.lineBreakMode = .byCharWrapping
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.font,
+        paragraph.alignment = alignment
+        paragraph.lineBreakMode = .byTruncatingTail
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: rect).addClip()
+        NSString(string: value).draw(in: rect, withAttributes: [
+            .font: font,
+            .foregroundColor: color,
             .paragraphStyle: paragraph
-        ]
-        let textSize = NSString(string: text).boundingRect(
-            with: NSSize(width: Self.maximumTextWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: attributes
-        ).size
-        return NSSize(
-            width: max(174, min(Self.maximumTextWidth, ceil(textSize.width)) + Self.horizontalPadding * 2),
-            height: ceil(textSize.height) + Self.verticalPadding * 2
-        )
+        ])
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private static func parse(_ line: String) -> (period: String, value: String, percent: Int?, reset: String) {
+        let placeholder: (period: String, value: String, percent: Int?, reset: String) = (period: "--", value: "--%", percent: nil, reset: "--")
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separator = trimmed.range(of: "·") else {
+            return placeholder
+        }
+
+        let left = String(trimmed[..<separator.lowerBound]).trimmingCharacters(in: .whitespaces)
+        let right = String(trimmed[separator.upperBound...]).trimmingCharacters(in: .whitespaces)
+        guard let colon = left.firstIndex(of: ":") else {
+            return placeholder
+        }
+
+        let period = String(left[..<colon]).trimmingCharacters(in: .whitespaces)
+        guard period == "5h" || period == "7d" else {
+            return placeholder
+        }
+
+        let rawValue = String(left[colon...].dropFirst()).trimmingCharacters(in: .whitespaces)
+        let value: String
+        let percent: Int?
+        if rawValue == "--" || rawValue == "--%" {
+            value = "--%"
+            percent = nil
+        } else {
+            guard rawValue.hasSuffix("%"),
+                  let parsed = Int(rawValue.dropLast()) else {
+                return placeholder
+            }
+            let clamped = max(0, min(100, parsed))
+            value = "\(clamped)%"
+            percent = clamped
+        }
+
+        guard right.hasPrefix("reset") else {
+            return placeholder
+        }
+        let reset = String(right.dropFirst("reset".count)).trimmingCharacters(in: .whitespaces)
+        guard reset == "--" || reset.count <= 11 else {
+            return placeholder
+        }
+        return (period, value, percent, reset.isEmpty ? "--" : reset)
+    }
+
+    private static func color(for percent: Int?) -> NSColor {
+        guard let percent else {
+            return NSColor(calibratedRed: 0.55, green: 0.69, blue: 0.79, alpha: 0.75)
+        }
+        if percent > 60 {
+            return NSColor(calibratedRed: 0.28, green: 0.78, blue: 0.48, alpha: 1.0)
+        }
+        if percent >= 20 {
+            return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.28, alpha: 1.0)
+        }
+        return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
     }
 }
-
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()

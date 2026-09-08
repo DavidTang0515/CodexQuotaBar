@@ -55,17 +55,10 @@ Floating ball:
 - Record local quota history for trend estimates.
 - Summarize local Codex Token counts for today, 7 days, 30 days, this month, or all records.
 - Provide a menu with:
-  - Last refresh time
-  - 5-hour reset time
-  - 7-day reset time
-  - Recent quota usage trend
-  - Local Token totals and input/cache/output composition
-  - Projected 5-hour quota duration
+  - Direct 5-hour and 7-day quota rows with reset date/time
   - Manual refresh
-  - Optional floating ball
-  - Open at Login toggle
-  - Open ChatGPT
-  - Clear Local Data
+  - `Usage statistics` submenu for period, Token totals, input/cache/output composition, trends, and projection
+  - `Settings` submenu for the optional floating ball, `Open Codex`, Open at Login, and Clear Local Data
   - Quit
 
 ## Install From GitHub Releases
@@ -98,6 +91,7 @@ The release is ad-hoc signed and not notarized. It does not install a LaunchAgen
 - `v0.2.1` restores quota access after the Codex desktop app moved into ChatGPT.
 - `v0.3.0` adds local quota history, usage trend estimates, and local data cleanup.
 - `v0.4.0` adds local Token summaries and refresh hardening while retaining the 5-hour and 7-day display.
+- `v0.4.1` refines the compact dual-ring floating ball, two-line quota details, and grouped menu layout without changing the local data boundary.
 
 ## Safety Boundaries
 
