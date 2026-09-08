@@ -371,6 +371,11 @@ final class QuotaHistoryStore {
 final class MenuQuotaRowView: NSView {
     static let menuWidth: CGFloat = 300
     static let menuHeight: CGFloat = 24
+    private static let contentInset: CGFloat = 14
+    private static let periodColumnWidth: CGFloat = 28
+    private static let valueColumnWidth: CGFloat = 44
+    private static let periodValueGap: CGFloat = 7
+    private static let valueResetGap: CGFloat = 8
 
     private let period: String
     private let periodLabel: NSTextField
@@ -387,8 +392,9 @@ final class MenuQuotaRowView: NSView {
         setAccessibilityLabel("\(period) quota")
         setAccessibilityValue("Unknown, reset --")
 
-        periodLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        periodLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         valueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        valueLabel.alignment = .left
         resetLabel.font = NSFont.systemFont(ofSize: 11)
         resetLabel.alignment = .left
         resetLabel.lineBreakMode = .byTruncatingTail
@@ -406,14 +412,14 @@ final class MenuQuotaRowView: NSView {
         }
 
         NSLayoutConstraint.activate([
-            periodLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            periodLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset),
             periodLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            periodLabel.widthAnchor.constraint(equalToConstant: 28),
-            valueLabel.leadingAnchor.constraint(equalTo: periodLabel.trailingAnchor, constant: 7),
+            periodLabel.widthAnchor.constraint(equalToConstant: Self.periodColumnWidth),
+            valueLabel.leadingAnchor.constraint(equalTo: periodLabel.trailingAnchor, constant: Self.periodValueGap),
             valueLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            valueLabel.widthAnchor.constraint(equalToConstant: 54),
-            resetLabel.leadingAnchor.constraint(equalTo: valueLabel.trailingAnchor, constant: 8),
-            resetLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            valueLabel.widthAnchor.constraint(equalToConstant: Self.valueColumnWidth),
+            resetLabel.leadingAnchor.constraint(equalTo: valueLabel.trailingAnchor, constant: Self.valueResetGap),
+            resetLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.contentInset),
             resetLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }
@@ -1366,6 +1372,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 final class FloatingBallView: NSView {
+    private static let graphiteBallColor = NSColor(
+        calibratedRed: 36.0 / 255.0,
+        green: 38.0 / 255.0,
+        blue: 43.0 / 255.0,
+        alpha: 0.90
+    )
+
+    private static let ringTrackColor = NSColor.white.withAlphaComponent(0.11)
+
+    // Fixed identity color for the 7-day ring; it communicates the period, not quota state.
+    private static let sevenDayRingColor = NSColor(
+        calibratedRed: 184.0 / 255.0,
+        green: 192.0 / 255.0,
+        blue: 200.0 / 255.0,
+        alpha: 0.94
+    )
+
     var onTogglePinnedDetail: (() -> Void)?
     private var hoverPanel: NSPanel?
     private var hoverView: HoverInfoView?
@@ -1502,19 +1525,19 @@ final class FloatingBallView: NSView {
         dirtyRect.fill()
 
         let background = NSBezierPath(ovalIn: bounds.insetBy(dx: 6, dy: 6))
-        NSColor.black.withAlphaComponent(0.58).setFill()
+        Self.graphiteBallColor.setFill()
         background.fill()
 
         let fiveHour = snapshot?.ok == true ? snapshot?.fiveHourLeft : nil
         let sevenDay = snapshot?.ok == true ? snapshot?.sevenDayLeft : nil
-        drawRing(in: bounds.insetBy(dx: 9.25, dy: 9.25), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
-        drawRing(in: bounds.insetBy(dx: 14, dy: 14), percent: sevenDay, color: color(for: sevenDay), width: 3.2)
+        drawRing(in: bounds.insetBy(dx: 8.5, dy: 8.5), percent: fiveHour, color: color(for: fiveHour), width: 4.5)
+        drawRing(in: bounds.insetBy(dx: 14, dy: 14), percent: sevenDay, color: Self.sevenDayRingColor, width: 2.5)
         drawCenterValue(fiveHour)
     }
 
     private func drawRing(in rect: NSRect, percent: Int?, color: NSColor, width: CGFloat) {
         let track = NSBezierPath(ovalIn: rect)
-        NSColor.white.withAlphaComponent(0.16).setStroke()
+        Self.ringTrackColor.setStroke()
         track.lineWidth = width
         track.stroke()
 
@@ -1579,14 +1602,12 @@ final class FloatingBallView: NSView {
 
 final class HoverInfoView: NSView {
     private static let panelSize = NSSize(width: 252, height: 68)
-    private static let periodFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    private static let periodFont = NSFont.systemFont(ofSize: 13, weight: .medium)
     private static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
-    private static let resetLabelFont = NSFont.systemFont(ofSize: 10.5)
-    private static let resetValueFont = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
-    private static let periodRect = NSRect(x: 13, y: 0, width: 24, height: 20)
-    private static let valueRect = NSRect(x: 42, y: 0, width: 42, height: 20)
-    private static let resetLabelRect = NSRect(x: 91, y: 1, width: 34, height: 18)
-    private static let resetValueRect = NSRect(x: 132, y: 1, width: 107, height: 18)
+    private static let resetFont = NSFont.systemFont(ofSize: 11)
+    private static let periodRect = NSRect(x: 14, y: 0, width: 28, height: 20)
+    private static let valueRect = NSRect(x: 49, y: 0, width: 44, height: 20)
+    private static let resetRect = NSRect(x: 101, y: 0, width: 137, height: 20)
 
     private var text: String
 
@@ -1620,9 +1641,8 @@ final class HoverInfoView: NSView {
             let row = Self.parse(String(line))
             let rowY: CGFloat = index == 0 ? 35 : 10
             draw(row.period, in: Self.periodRect.offsetBy(dx: 0, dy: rowY), font: Self.periodFont, color: .white)
-            draw(row.value, in: Self.valueRect.offsetBy(dx: 0, dy: rowY), font: Self.valueFont, color: Self.color(for: row.percent), alignment: .right)
-            draw("reset", in: Self.resetLabelRect.offsetBy(dx: 0, dy: rowY), font: Self.resetLabelFont, color: .white.withAlphaComponent(0.70))
-            draw(row.reset, in: Self.resetValueRect.offsetBy(dx: 0, dy: rowY), font: Self.resetValueFont, color: .white.withAlphaComponent(0.86))
+            draw(row.value, in: Self.valueRect.offsetBy(dx: 0, dy: rowY), font: Self.valueFont, color: Self.color(for: row.percent), alignment: .left)
+            draw("reset \(row.reset)", in: Self.resetRect.offsetBy(dx: 0, dy: rowY), font: Self.resetFont, color: .white.withAlphaComponent(0.70))
         }
     }
 

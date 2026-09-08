@@ -18,15 +18,39 @@ SNAPSHOT_DRIVER = (ROOT / "ui_snapshot_driver.swift").read_text(encoding="utf-8"
 class StaticUIContractTests(unittest.TestCase):
     def test_small_ball_geometry_and_center_value_contract(self):
         self.assertIn("NSRect(x: 0, y: 0, width: 54, height: 54)", SNAPSHOT_DRIVER)
-        self.assertIn("bounds.insetBy(dx: 9.25, dy: 9.25)", SOURCE)
+        self.assertIn("bounds.insetBy(dx: 8.5, dy: 8.5)", SOURCE)
         self.assertIn("bounds.insetBy(dx: 14, dy: 14)", SOURCE)
         self.assertIn("width: 4.5", SOURCE)
-        self.assertIn("width: 3.2", SOURCE)
+        self.assertIn("width: 2.5", SOURCE)
+        self.assertIn("private static let graphiteBallColor", SOURCE)
+        self.assertIn("calibratedRed: 36.0 / 255.0", SOURCE)
+        self.assertIn("green: 38.0 / 255.0", SOURCE)
+        self.assertIn("blue: 43.0 / 255.0", SOURCE)
+        self.assertIn("alpha: 0.90", SOURCE)
+        self.assertIn("private static let ringTrackColor = NSColor.white.withAlphaComponent(0.11)", SOURCE)
+        self.assertIn("Self.ringTrackColor.setStroke()", SOURCE)
+        self.assertIn("private static let sevenDayRingColor", SOURCE)
+        self.assertIn("calibratedRed: 184.0 / 255.0", SOURCE)
+        self.assertIn("green: 192.0 / 255.0", SOURCE)
+        self.assertIn("blue: 200.0 / 255.0", SOURCE)
+        self.assertIn("alpha: 0.94", SOURCE)
+        self.assertIn("color: Self.sevenDayRingColor, width: 2.5", SOURCE)
         self.assertIn("monospacedSystemFont(ofSize: 10.0, weight: .semibold)", SOURCE)
         self.assertIn("drawCenterValue(fiveHour)", SOURCE)
 
     def test_five_ball_states_and_unknown_state_are_rendered_natively(self):
-        for name in ("state-0", "state-9", "state-59", "state-100", "state-none"):
+        for name in (
+            "state-both-high",
+            "state-5h-low-7d-high",
+            "state-5h-high-7d-low",
+            "state-5h-orange-7d-high",
+            "state-7d-low",
+            "state-0",
+            "state-100",
+            "state-5h-missing",
+            "state-7d-missing",
+            "state-none",
+        ):
             self.assertIn('"' + name + '"', SNAPSHOT_DRIVER)
         self.assertIn("snapshot?.ok == true ? snapshot?.fiveHourLeft : nil", SOURCE)
         self.assertIn('let text = percent.map { "\\(max(0, min(100, $0)))" } ?? "--"', SOURCE)
@@ -40,6 +64,13 @@ class StaticUIContractTests(unittest.TestCase):
         self.assertIn("menu.minimumWidth = MenuQuotaRowView.menuWidth", SOURCE)
         self.assertIn("usageMenu.minimumWidth = MenuDetailRowView.menuWidth", SOURCE)
         self.assertIn("settingsMenu.minimumWidth = 220", SOURCE)
+        self.assertIn("private static let contentInset: CGFloat = 14", SOURCE)
+        self.assertIn("periodLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset)", SOURCE)
+        self.assertIn("resetLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.contentInset)", SOURCE)
+        self.assertIn("NSFont.systemFont(ofSize: 13, weight: .medium)", SOURCE)
+        self.assertIn("private static let valueColumnWidth: CGFloat = 44", SOURCE)
+        self.assertIn("private static let valueResetGap: CGFloat = 8", SOURCE)
+        self.assertIn("valueLabel.alignment = .left", SOURCE)
         self.assertIn("label.lineBreakMode = .byTruncatingTail", SOURCE)
         self.assertIn("usageMenu.update()", SOURCE)
         self.assertNotIn("reopenMenuAfterPeriodChange", SOURCE)
@@ -63,7 +94,11 @@ class StaticUIContractTests(unittest.TestCase):
         self.assertIn('guard right.hasPrefix("reset") else', SOURCE)
         self.assertIn('reset.count <= 11', SOURCE)
         self.assertIn("byTruncatingTail", SOURCE)
-        self.assertIn("private static let resetValueRect", SOURCE)
+        self.assertIn("private static let resetFont = NSFont.systemFont(ofSize: 11)", SOURCE)
+        self.assertIn("private static let valueRect = NSRect(x: 49, y: 0, width: 44, height: 20)", SOURCE)
+        self.assertIn("private static let resetRect = NSRect(x: 101, y: 0, width: 137, height: 20)", SOURCE)
+        self.assertIn('draw(row.value, in: Self.valueRect.offsetBy(dx: 0, dy: rowY), font: Self.valueFont, color: Self.color(for: row.percent), alignment: .left)', SOURCE)
+        self.assertIn('draw("reset \\(row.reset)", in: Self.resetRect', SOURCE)
         self.assertIn("NSGraphicsContext.saveGraphicsState()", SOURCE)
         self.assertIn('NSSize(width: 252, height: 68)', SOURCE)
 

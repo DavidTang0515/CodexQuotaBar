@@ -42,10 +42,15 @@ struct UISnapshotMain {
         app.setActivationPolicy(.accessory)
 
         let ballStates: [(String, QuotaSnapshot)] = [
+            ("state-both-high", snapshot(ok: true, fiveHour: 85, sevenDay: 78)),
+            ("state-5h-low-7d-high", snapshot(ok: true, fiveHour: 9, sevenDay: 82)),
+            ("state-5h-high-7d-low", snapshot(ok: true, fiveHour: 82, sevenDay: 9)),
+            ("state-5h-orange-7d-high", snapshot(ok: true, fiveHour: 40, sevenDay: 95)),
+            ("state-7d-low", snapshot(ok: true, fiveHour: 69, sevenDay: 9)),
             ("state-0", snapshot(ok: true, fiveHour: 0, sevenDay: 0)),
-            ("state-9", snapshot(ok: true, fiveHour: 9, sevenDay: 9)),
-            ("state-59", snapshot(ok: true, fiveHour: 59, sevenDay: 59)),
             ("state-100", snapshot(ok: true, fiveHour: 100, sevenDay: 100)),
+            ("state-5h-missing", snapshot(ok: true, fiveHour: nil, sevenDay: 84)),
+            ("state-7d-missing", snapshot(ok: true, fiveHour: 84, sevenDay: nil)),
             ("state-none", snapshot(ok: false, fiveHour: nil, sevenDay: nil))
         ]
 
