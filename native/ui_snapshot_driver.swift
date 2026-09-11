@@ -1,6 +1,24 @@
 import AppKit
 import Foundation
 
+final class SnapshotCanvasView: NSView {
+    private let backgroundColor: NSColor
+
+    init(frame: NSRect, backgroundColor: NSColor) {
+        self.backgroundColor = backgroundColor
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        backgroundColor.setFill()
+        dirtyRect.fill()
+    }
+}
+
 func snapshot(ok: Bool, fiveHour: Int?, sevenDay: Int?) -> QuotaSnapshot {
     QuotaSnapshot(
         ok: ok,
@@ -18,18 +36,59 @@ func snapshot(ok: Bool, fiveHour: Int?, sevenDay: Int?) -> QuotaSnapshot {
 }
 
 func writePNG(view: NSView, name: String, outputDirectory: URL) throws {
-    let image = NSImage(size: view.bounds.size)
-    image.lockFocus()
-    view.draw(view.bounds)
-    image.unlockFocus()
-
-    guard let tiff = image.tiffRepresentation,
-          let bitmap = NSBitmapImageRep(data: tiff),
-          let png = bitmap.representation(using: .png, properties: [:]) else {
+    view.layoutSubtreeIfNeeded()
+    guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        throw NSError(domain: "CodexQuotaBarSnapshot", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not allocate bitmap for " + name + "."])
+    }
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    guard let png = bitmap.representation(using: .png, properties: [:]) else {
         throw NSError(domain: "CodexQuotaBarSnapshot", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not encode " + name + "."])
     }
     try png.write(to: outputDirectory.appendingPathComponent(name + ".png"), options: .atomic)
     print(name + " " + String(Int(view.bounds.width)) + "x" + String(Int(view.bounds.height)))
+}
+
+func writePNG(image: NSImage, name: String, outputDirectory: URL) throws {
+    guard let tiff = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiff),
+          let png = bitmap.representation(using: .png, properties: [:]) else {
+        throw NSError(domain: "CodexQuotaBarSnapshot", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not encode " + name + "."])
+    }
+    try png.write(to: outputDirectory.appendingPathComponent(name + ".png"), options: .atomic)
+    print(name + " " + String(Int(image.size.width)) + "x" + String(Int(image.size.height)))
+}
+
+func writePNG(view: NSView, name: String, outputDirectory: URL, backgroundColor: NSColor) throws {
+    let canvas = SnapshotCanvasView(frame: view.bounds, backgroundColor: backgroundColor)
+    view.frame = canvas.bounds
+    canvas.addSubview(view)
+    try writePNG(view: canvas, name: name, outputDirectory: outputDirectory)
+}
+
+func assertMenuStatusPresentation() {
+    let loading = MenuStatusPresentation.refreshing(keeping: .live)
+    precondition(loading.refreshTitle == "Refreshing…")
+    precondition(!loading.refreshEnabled)
+    precondition(loading.statusText == nil)
+
+    let stale = MenuStatusPresentation.refreshFailure(lastUpdated: "09:55")
+    precondition(stale.refreshTitle == "Retry refresh")
+    precondition(stale.refreshEnabled)
+    precondition(stale.statusText == "Showing last update 09:55")
+    precondition(stale.statusKind == .stale)
+
+    let noData = MenuStatusPresentation.refreshFailure(lastUpdated: nil)
+    precondition(noData.statusText == "No quota data")
+    precondition(noData.statusKind == .noData)
+
+    let malformed = MenuStatusPresentation.refreshFailure(lastUpdated: "sk-live-secret-token")
+    precondition(malformed.statusText == "No quota data")
+    precondition(!malformed.statusText!.contains("secret"))
+
+    let operationFailure = MenuStatusPresentation.operationFailure
+    precondition(operationFailure.statusText == "Settings unavailable")
+    precondition(!operationFailure.statusText!.contains("/"))
+    precondition(MenuStatusPresentation.live.statusText == nil)
 }
 
 @main
@@ -40,6 +99,44 @@ struct UISnapshotMain {
 
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        assertMenuStatusPresentation()
+
+        let lightAppearance = NSAppearance(named: .aqua)
+        let darkAppearance = NSAppearance(named: .darkAqua)
+        let lightStatus = StatusItemRenderer.image(
+            fiveHour: 60,
+            sevenDay: 79,
+            loading: false,
+            ok: true,
+            appearance: lightAppearance
+        )
+        let darkStatus = StatusItemRenderer.image(
+            fiveHour: 60,
+            sevenDay: 79,
+            loading: false,
+            ok: true,
+            appearance: darkAppearance
+        )
+        try writePNG(image: lightStatus, name: "status-light", outputDirectory: outputDirectory)
+        try writePNG(image: darkStatus, name: "status-dark", outputDirectory: outputDirectory)
+
+        let statusRows: [(String, MenuStatusPresentation)] = [
+            ("menu-status-stale", .refreshFailure(lastUpdated: "09:55")),
+            ("menu-status-no-data", .refreshFailure(lastUpdated: nil)),
+            ("menu-status-settings-error", .operationFailure)
+        ]
+        for (name, presentation) in statusRows {
+            let view = MenuStatusRowView()
+            if let text = presentation.statusText {
+                view.update(text: text, kind: presentation.statusKind)
+            }
+            try writePNG(
+                view: view,
+                name: name,
+                outputDirectory: outputDirectory,
+                backgroundColor: NSColor(calibratedWhite: 0.96, alpha: 1.0)
+            )
+        }
 
         let ballStates: [(String, QuotaSnapshot)] = [
             ("state-both-high", snapshot(ok: true, fiveHour: 85, sevenDay: 78)),

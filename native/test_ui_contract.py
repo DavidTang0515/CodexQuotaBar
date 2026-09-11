@@ -121,6 +121,25 @@ class StaticUIContractTests(unittest.TestCase):
         self.assertIn('text: "ChatGPT or Codex app not found."', SNAPSHOT_DRIVER)
         self.assertIn('name: "detail-unavailable"', SNAPSHOT_DRIVER)
 
+    def test_refresh_feedback_is_stateful_and_sanitized(self):
+        for text in ("Refreshing…", "Retry refresh", "Showing last update", "No quota data", "Settings unavailable"):
+            self.assertIn(text, SOURCE)
+        self.assertIn("struct MenuStatusPresentation: Equatable", SOURCE)
+        self.assertIn("static func refreshing(keeping previous: MenuStatusPresentation)", SOURCE)
+        self.assertIn("static func refreshFailure(lastUpdated: String?)", SOURCE)
+        self.assertIn("static let operationFailure", SOURCE)
+        self.assertIn('let malformed = MenuStatusPresentation.refreshFailure(lastUpdated: "sk-live-secret-token")', SNAPSHOT_DRIVER)
+        self.assertIn("assertMenuStatusPresentation()", SNAPSHOT_DRIVER)
+
+    def test_status_item_reacts_to_actual_button_appearance_and_snapshots_both_modes(self):
+        self.assertIn("button.observe(\\.effectiveAppearance", SOURCE)
+        self.assertIn("button?.effectiveAppearance", SOURCE)
+        self.assertIn("lastRenderedAppearanceKey", SOURCE)
+        self.assertIn("StatusItemRenderer.appearanceKey", SOURCE)
+        self.assertIn('name: "status-light"', SNAPSHOT_DRIVER)
+        self.assertIn('name: "status-dark"', SNAPSHOT_DRIVER)
+        self.assertIn('"menu-status-settings-error"', SNAPSHOT_DRIVER)
+
 
 if __name__ == "__main__":
     unittest.main()

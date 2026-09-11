@@ -19,6 +19,66 @@ struct QuotaSnapshot: Decodable {
 
 }
 
+enum MenuStatusKind: Equatable {
+    case normal
+    case stale
+    case noData
+    case operationError
+}
+
+struct MenuStatusPresentation: Equatable {
+    let refreshTitle: String
+    let refreshEnabled: Bool
+    let statusText: String?
+    let statusKind: MenuStatusKind
+
+    static let live = MenuStatusPresentation(
+        refreshTitle: "Refresh",
+        refreshEnabled: true,
+        statusText: nil,
+        statusKind: .normal
+    )
+
+    static func refreshing(keeping previous: MenuStatusPresentation) -> MenuStatusPresentation {
+        MenuStatusPresentation(
+            refreshTitle: "Refreshing…",
+            refreshEnabled: false,
+            statusText: previous.statusText,
+            statusKind: previous.statusKind
+        )
+    }
+
+    static func refreshFailure(lastUpdated: String?) -> MenuStatusPresentation {
+        if let lastUpdated, isClockText(lastUpdated) {
+            return MenuStatusPresentation(
+                refreshTitle: "Retry refresh",
+                refreshEnabled: true,
+                statusText: "Showing last update \(lastUpdated)",
+                statusKind: .stale
+            )
+        }
+        return MenuStatusPresentation(
+            refreshTitle: "Retry refresh",
+            refreshEnabled: true,
+            statusText: "No quota data",
+            statusKind: .noData
+        )
+    }
+
+    private static func isClockText(_ value: String) -> Bool {
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        return parts.count == 2
+            && parts.allSatisfy { $0.count == 2 && Int($0) != nil }
+    }
+
+    static let operationFailure = MenuStatusPresentation(
+        refreshTitle: "Refresh",
+        refreshEnabled: true,
+        statusText: "Settings unavailable",
+        statusKind: .operationError
+    )
+}
+
 struct UsageSnapshot: Decodable {
     let ok: Bool
     let updatedAt: String?
@@ -576,6 +636,136 @@ final class MenuDetailRowView: NSView {
     }
 }
 
+final class MenuStatusRowView: NSView {
+    static let menuWidth: CGFloat = MenuQuotaRowView.menuWidth
+    static let menuHeight: CGFloat = 22
+
+    private let label = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.menuWidth, height: Self.menuHeight))
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("Quota status")
+        setAccessibilityValue("")
+
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.isBordered = false
+        label.drawsBackground = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.setAccessibilityElement(false)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.menuWidth, height: Self.menuHeight)
+    }
+
+    func update(text: String, kind: MenuStatusKind) {
+        label.stringValue = text
+        label.textColor = kind == .operationError ? .systemOrange : .secondaryLabelColor
+        setAccessibilityValue(text)
+    }
+}
+
+struct StatusItemRenderer {
+    static let size = NSSize(width: 84, height: 24)
+
+    static func image(fiveHour: Int?, sevenDay: Int?, loading: Bool, ok: Bool, appearance: NSAppearance?) -> NSImage {
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let image = NSImage(size: Self.size)
+        image.lockFocus()
+
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: Self.size).fill()
+
+        drawRow(label: "5h", percent: fiveHour, y: 13.0, loading: loading, ok: ok, appearance: appearance)
+        drawRow(label: "7d", percent: sevenDay, y: 2.5, loading: loading, ok: ok, appearance: appearance)
+
+        image.unlockFocus()
+        image.isTemplate = false
+        image.size = NSSize(width: floor(Self.size.width / scale * scale), height: Self.size.height)
+        return image
+    }
+
+    static func appearanceKey(for appearance: NSAppearance?) -> String {
+        let name = appearance?.bestMatch(from: [.aqua, .darkAqua]) ?? .aqua
+        return name == .darkAqua ? "darkAqua" : "aqua"
+    }
+
+    private static func drawRow(label: String, percent: Int?, y: CGFloat, loading: Bool, ok: Bool, appearance: NSAppearance?) {
+        let foreground = foregroundColor(for: appearance)
+        let labelAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 8.2, weight: .bold),
+            .foregroundColor: foreground
+        ]
+        NSString(string: label).draw(at: NSPoint(x: 0, y: y), withAttributes: labelAttributes)
+
+        let filled = barsFilled(percent)
+        let color = quotaColor(percent: percent, loading: loading, ok: ok)
+        for index in 0..<5 {
+            let x = CGFloat(21 + index * 7)
+            let bar = NSBezierPath(roundedRect: NSRect(x: x, y: y + 1.4, width: 4.0, height: 7.2), xRadius: 2.0, yRadius: 2.0)
+            if index < filled {
+                color.setFill()
+            } else {
+                NSColor.systemBlue.withAlphaComponent(0.22).setFill()
+            }
+            bar.fill()
+        }
+
+        let percentAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 8.2, weight: .bold),
+            .foregroundColor: foreground
+        ]
+        NSString(string: percentText(percent)).draw(at: NSPoint(x: 60, y: y), withAttributes: percentAttributes)
+    }
+
+    private static func foregroundColor(for appearance: NSAppearance?) -> NSColor {
+        let name = appearance?.bestMatch(from: [.aqua, .darkAqua]) ?? .aqua
+        return name == .darkAqua ? .white : NSColor(calibratedWhite: 0.16, alpha: 1.0)
+    }
+
+    private static func barsFilled(_ percent: Int?) -> Int {
+        guard let percent else { return 0 }
+        return max(0, min(5, Int(ceil(Double(percent) / 20.0))))
+    }
+
+    private static func quotaColor(percent: Int?, loading: Bool, ok: Bool) -> NSColor {
+        if loading || !ok || percent == nil {
+            return NSColor(calibratedRed: 0.55, green: 0.69, blue: 0.79, alpha: 0.55)
+        }
+        if percent! > 60 {
+            return NSColor(calibratedRed: 0.28, green: 0.78, blue: 0.48, alpha: 1.0)
+        }
+        if percent! >= 20 {
+            return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.28, alpha: 1.0)
+        }
+        return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
+    }
+
+    private static func percentText(_ value: Int?) -> String {
+        guard let value else { return "--%" }
+        return "\(max(0, min(100, value)))%"
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
@@ -620,7 +810,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let usageStatisticsItem = NSMenuItem(title: "Usage statistics", action: nil, keyEquivalent: "")
     private let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
     private let clearLocalDataItem = NSMenuItem(title: "Clear Local Data...", action: #selector(clearLocalData), keyEquivalent: "")
-    private let stateItem = NSMenuItem(title: "Starting...", action: nil, keyEquivalent: "")
+    private let stateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let stateView = MenuStatusRowView()
     private lazy var openChatGPTItem = NSMenuItem(title: "Open Codex", action: #selector(openChatGPT), keyEquivalent: "o")
     private lazy var quitItem = NSMenuItem(title: "Quit CodexQuotaBar", action: #selector(quit), keyEquivalent: "q")
     private let historyStore = QuotaHistoryStore()
@@ -631,11 +822,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var latestSnapshot: QuotaSnapshot?
     private var latestUsage: UsageSnapshot?
     private var lastValidSnapshot: QuotaSnapshot?
-    private var operationError: String?
+    private var statusPresentation = MenuStatusPresentation.live
     private var lastRenderedFiveHour: Int?
     private var lastRenderedSevenDay: Int?
     private var lastRenderedLoading = false
     private var lastRenderedOK = false
+    private var lastRenderedAppearanceKey: String?
+    private var appearanceObservation: NSKeyValueObservation?
     private var floatingPanel: NSPanel?
     private var floatingView: FloatingBallView?
     private var localClickMonitor: Any?
@@ -645,6 +838,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         configureMenu()
+        observeStatusItemAppearance()
         updateButton(snapshot: nil, loading: true)
         if preferences.showFloatingBall {
             showFloatingBall()
@@ -659,11 +853,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
         retryTimer?.invalidate()
+        appearanceObservation?.invalidate()
         if let localClickMonitor {
             NSEvent.removeMonitor(localClickMonitor)
         }
         if let globalClickMonitor {
             NSEvent.removeMonitor(globalClickMonitor)
+        }
+    }
+
+    private func observeStatusItemAppearance() {
+        guard let button = statusItem.button else { return }
+        appearanceObservation = button.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            guard let self else { return }
+            self.lastRenderedAppearanceKey = nil
+            self.updateButton(snapshot: self.latestSnapshot, loading: self.isRefreshing && self.latestSnapshot == nil)
         }
     }
 
@@ -682,9 +886,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fiveHourTrendItem.view = fiveHourTrendView
         sevenDayTrendItem.view = sevenDayTrendView
         projectedItem.view = projectedView
+        stateItem.view = stateView
+        stateItem.isHidden = true
 
         menu.addItem(fiveHourItem)
         menu.addItem(sevenDayItem)
+        menu.addItem(stateItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(refreshItem)
         menu.addItem(usageStatisticsItem)
@@ -727,13 +934,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem.button?.toolTip = "CodexQuotaBar"
     }
 
+    private func applyStatusPresentation() {
+        refreshItem.title = statusPresentation.refreshTitle
+        refreshItem.isEnabled = statusPresentation.refreshEnabled
+        stateItem.isHidden = statusPresentation.statusText == nil
+        if let statusText = statusPresentation.statusText {
+            stateView.update(text: statusText, kind: statusPresentation.statusKind)
+        }
+        menu.update()
+    }
+
     @objc private func refreshNow() {
         guard !isRefreshing else {
             return
         }
         isRefreshing = true
-        refreshItem.isEnabled = false
-        stateItem.title = "Refreshing..."
+        statusPresentation = .refreshing(keeping: statusPresentation)
+        applyStatusPresentation()
         updateDetailText()
         refreshUsage()
 
@@ -742,7 +959,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isRefreshing = false
-                self.refreshItem.isEnabled = true
                 self.apply(snapshot: snapshot)
             }
         }
@@ -906,15 +1122,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         latestSnapshot = snapshot
 
         guard let snapshot else {
-            stateItem.title = "Unavailable"
+            statusPresentation = .refreshFailure(lastUpdated: lastValidUpdateText())
+            applyStatusPresentation()
             applyDisplayedSnapshot(lastValidSnapshot)
             updateDetailText()
             return
         }
 
         if snapshot.ok {
-            stateItem.title = "Live quota"
-            operationError = nil
+            statusPresentation = .live
+            applyStatusPresentation()
             lastValidSnapshot = snapshot
             historyStore.record(snapshot: snapshot)
             retryTimer?.invalidate()
@@ -922,7 +1139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             applyDisplayedSnapshot(snapshot)
             updateTrendItems()
         } else {
-            stateItem.title = "Quota unavailable"
+            statusPresentation = .refreshFailure(lastUpdated: lastValidUpdateText())
+            applyStatusPresentation()
             applyDisplayedSnapshot(lastValidSnapshot)
             scheduleRetryIfNeeded()
         }
@@ -1048,11 +1266,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let fiveHour = snapshot?.fiveHourLeft
         let sevenDay = snapshot?.sevenDayLeft
         let ok = snapshot?.ok ?? false
+        let appearance = statusItem.button?.effectiveAppearance
+        let appearanceKey = StatusItemRenderer.appearanceKey(for: appearance)
         statusItem.button?.toolTip = detailText()
-        guard fiveHour != lastRenderedFiveHour || sevenDay != lastRenderedSevenDay || loading != lastRenderedLoading || ok != lastRenderedOK else {
+        guard fiveHour != lastRenderedFiveHour
+                || sevenDay != lastRenderedSevenDay
+                || loading != lastRenderedLoading
+                || ok != lastRenderedOK
+                || appearanceKey != lastRenderedAppearanceKey else {
             return
         }
-        let image = renderStatusImage(fiveHour: fiveHour, sevenDay: sevenDay, loading: loading, ok: ok)
+        let image = StatusItemRenderer.image(
+            fiveHour: fiveHour,
+            sevenDay: sevenDay,
+            loading: loading,
+            ok: ok,
+            appearance: appearance
+        )
         statusItem.length = image.size.width
         statusItem.button?.image = image
         statusItem.button?.imagePosition = .imageOnly
@@ -1060,74 +1290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastRenderedSevenDay = sevenDay
         lastRenderedLoading = loading
         lastRenderedOK = ok
-    }
-
-    private func renderStatusImage(fiveHour: Int?, sevenDay: Int?, loading: Bool, ok: Bool) -> NSImage {
-        let scale = NSScreen.main?.backingScaleFactor ?? 2
-        let size = NSSize(width: 84, height: 24)
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        let rect = NSRect(origin: .zero, size: size)
-        NSColor.clear.setFill()
-        rect.fill()
-
-        drawRow(label: "5h", percent: fiveHour, y: 13.0, loading: loading, ok: ok)
-        drawRow(label: "7d", percent: sevenDay, y: 2.5, loading: loading, ok: ok)
-
-        image.unlockFocus()
-        image.isTemplate = false
-        image.size = NSSize(width: floor(size.width / scale * scale), height: size.height)
-        return image
-    }
-
-    private func drawRow(label: String, percent: Int?, y: CGFloat, loading: Bool, ok: Bool) {
-        let labelAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 8.2, weight: .bold),
-            .foregroundColor: NSColor.white
-        ]
-        NSString(string: label).draw(at: NSPoint(x: 0, y: y), withAttributes: labelAttributes)
-
-        let filled = barsFilled(percent)
-        let color = quotaColor(percent: percent, loading: loading, ok: ok)
-        for index in 0..<5 {
-            let x = CGFloat(21 + index * 7)
-            let bar = NSBezierPath(roundedRect: NSRect(x: x, y: y + 1.4, width: 4.0, height: 7.2), xRadius: 2.0, yRadius: 2.0)
-            if index < filled {
-                color.setFill()
-            } else {
-                NSColor.systemBlue.withAlphaComponent(0.22).setFill()
-            }
-            bar.fill()
-        }
-
-        let percentAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 8.2, weight: .bold),
-            .foregroundColor: NSColor.white
-        ]
-        NSString(string: percentText(percent)).draw(at: NSPoint(x: 60, y: y), withAttributes: percentAttributes)
-    }
-
-    private func barsFilled(_ percent: Int?) -> Int {
-        guard let percent else { return 0 }
-        return max(0, min(5, Int(ceil(Double(percent) / 20.0))))
-    }
-
-    private func quotaColor(percent: Int?, loading: Bool, ok: Bool) -> NSColor {
-        if loading || !ok || percent == nil {
-            return NSColor(calibratedRed: 0.55, green: 0.69, blue: 0.79, alpha: 0.55)
-        }
-        if percent! > 60 {
-            return NSColor(calibratedRed: 0.28, green: 0.78, blue: 0.48, alpha: 1.0)
-        }
-        if percent! >= 20 {
-            return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.28, alpha: 1.0)
-        }
-        return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
-    }
-
-    private func quotaColor(percent: Int?) -> NSColor {
-        quotaColor(percent: percent, loading: false, ok: percent != nil)
+        lastRenderedAppearanceKey = appearanceKey
     }
 
     private func percentText(_ value: Int?) -> String {
@@ -1160,6 +1323,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let output = DateFormatter()
         output.dateFormat = "HH:mm"
         return output.string(from: date)
+    }
+
+    private func lastValidUpdateText() -> String? {
+        guard let value = lastValidSnapshot?.updatedAt else {
+            return nil
+        }
+        let text = shortTime(value)
+        return text == "--" || text == value ? nil : text
     }
 
     private func shortDateTime(_ value: String?) -> String {
@@ -1225,7 +1396,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        stateItem.title = "ChatGPT or Codex app not found."
+        statusPresentation = .operationFailure
+        applyStatusPresentation()
     }
 
     @objc private func toggleFloatingBall() {
@@ -1326,9 +1498,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             updateOpenAtLoginMenuItem()
         } catch {
-            operationError = "Open at Login failed: \(error.localizedDescription)"
-            stateItem.title = "Open at Login unavailable"
-            updateDetailText()
+            statusPresentation = .operationFailure
+            applyStatusPresentation()
         }
     }
 
@@ -1356,13 +1527,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             latestUsage = nil
             updateTrendItems()
             updateUsageItems()
-            operationError = nil
-            stateItem.title = "Local CodexQuotaBar data moved to Trash."
-            updateDetailText()
+            statusPresentation = .live
+            applyStatusPresentation()
         } catch {
-            operationError = "Could not clear local data: \(error.localizedDescription)"
-            stateItem.title = "Could not clear local data"
-            updateDetailText()
+            statusPresentation = .operationFailure
+            applyStatusPresentation()
         }
     }
 
