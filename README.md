@@ -71,24 +71,25 @@ Floating ball:
 
 ## Install From GitHub Releases
 
-Download the latest `CodexQuotaBar-*.dmg` from GitHub Releases.
+Download the latest `CodexQuotaBar-*.app.zip` or available `.dmg` from [GitHub Releases](https://github.com/DavidTang0515/CodexQuotaBar/releases/latest).
 
-1. Open the DMG.
+1. Extract the ZIP, or open the DMG.
 2. Drag `CodexQuotaBar.app` into `Applications`.
 3. Open `CodexQuotaBar` from Applications.
 4. If macOS blocks the app, open System Settings > Privacy & Security and allow it.
 
 Requirements:
 
-- macOS 13 or newer.
-- ChatGPT desktop app, legacy Codex desktop app, or Codex CLI installed and signed in.
+- Apple Silicon (arm64), macOS 13 or newer.
+- ChatGPT desktop app, legacy Codex desktop app, or Codex CLI installed.
+- Reading quota requires a ChatGPT account authenticated in the local Codex app-server. API-only or unauthenticated setups may show `--` (unknown quota).
 
 Uninstall:
 
 1. Quit CodexQuotaBar from the menu bar.
-2. Delete `/Applications/CodexQuotaBar.app`.
-3. Optional clean removal: use `Clear Local Data...` from the app menu before deleting the app,
-   or delete `~/Library/Application Support/CodexQuotaBar`.
+2. Move `/Applications/CodexQuotaBar.app` to Trash.
+3. Optional clean removal: use `Clear Local Data...` from the app menu before quitting,
+   or move `~/Library/Application Support/CodexQuotaBar` to Trash after quitting.
 
 The release is ad-hoc signed and not notarized. It does not install a LaunchAgent, daemon, or auto-updater. Open at Login is optional and controlled from the app menu.
 
