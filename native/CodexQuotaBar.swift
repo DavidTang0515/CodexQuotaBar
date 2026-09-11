@@ -19,6 +19,49 @@ struct QuotaSnapshot: Decodable {
 
 }
 
+func ui(_ english: String, _ chinese: String) -> String {
+    (Locale.preferredLanguages.first ?? "en").hasPrefix("zh") ? chinese : english
+}
+
+enum QuotaDisplay {
+    static func snapshot(latest: QuotaSnapshot?, lastValid: QuotaSnapshot?) -> QuotaSnapshot? {
+        latest?.ok == true ? latest : lastValid
+    }
+
+    static func date(_ text: String?) -> Date? {
+        guard let text else { return nil }
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: text) { return date }
+        formatter.formatOptions.insert(.withFractionalSeconds)
+        return formatter.date(from: text)
+    }
+
+    static func updateTime(_ text: String?, now: Date = Date()) -> String? {
+        guard let date = date(text) else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = Calendar.current.isDate(date, inSameDayAs: now) ? "HH:mm" : "MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
+
+    static func resetTime(_ text: String?, now: Date = Date()) -> String {
+        updateTime(text, now: now) ?? "--"
+    }
+
+    static func resetLabel(_ time: String) -> String {
+        time == "--" ? ui("Reset unknown", "重置时间未知") : ui("reset \(time)", "\(time) 重置")
+    }
+}
+
+struct RefreshRetryBudget {
+    private(set) var available = true
+    mutating func beginCycle() { available = true }
+    mutating func consume() -> Bool {
+        guard available else { return false }
+        available = false
+        return true
+    }
+}
+
 enum MenuStatusKind: Equatable {
     case normal
     case stale
@@ -33,7 +76,7 @@ struct MenuStatusPresentation: Equatable {
     let statusKind: MenuStatusKind
 
     static let live = MenuStatusPresentation(
-        refreshTitle: "Refresh",
+        refreshTitle: ui("Refresh", "刷新"),
         refreshEnabled: true,
         statusText: nil,
         statusKind: .normal
@@ -41,40 +84,46 @@ struct MenuStatusPresentation: Equatable {
 
     static func refreshing(keeping previous: MenuStatusPresentation) -> MenuStatusPresentation {
         MenuStatusPresentation(
-            refreshTitle: "Refreshing…",
+            refreshTitle: ui("Refreshing…", "正在刷新…"),
             refreshEnabled: false,
             statusText: previous.statusText,
             statusKind: previous.statusKind
         )
     }
 
-    static func refreshFailure(lastUpdated: String?) -> MenuStatusPresentation {
+    static func refreshFailure(lastUpdated: String?, hasData: Bool = false) -> MenuStatusPresentation {
         if let lastUpdated, isClockText(lastUpdated) {
             return MenuStatusPresentation(
-                refreshTitle: "Retry refresh",
+                refreshTitle: ui("Retry refresh", "重新刷新"),
                 refreshEnabled: true,
-                statusText: "Showing last update \(lastUpdated)",
+                statusText: ui("Last update \(lastUpdated)", "刷新失败 · 上次更新 \(lastUpdated)"),
                 statusKind: .stale
             )
         }
         return MenuStatusPresentation(
-            refreshTitle: "Retry refresh",
+            refreshTitle: ui("Retry refresh", "重新刷新"),
             refreshEnabled: true,
-            statusText: "No quota data",
-            statusKind: .noData
+            statusText: hasData ? ui("Showing previous quota", "刷新失败 · 保留上次额度") : ui("No quota data", "暂时无法读取额度"),
+            statusKind: hasData ? .stale : .noData
         )
     }
 
     private static func isClockText(_ value: String) -> Bool {
-        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
-        return parts.count == 2
-            && parts.allSatisfy { $0.count == 2 && Int($0) != nil }
+        let patterns = ["HH:mm", "MM-dd HH:mm"]
+        return patterns.contains { pattern in
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = pattern
+            formatter.isLenient = false
+            guard let date = formatter.date(from: value) else { return false }
+            return formatter.string(from: date) == value
+        }
     }
 
     static let operationFailure = MenuStatusPresentation(
-        refreshTitle: "Refresh",
+        refreshTitle: ui("Refresh", "刷新"),
         refreshEnabled: true,
-        statusText: "Settings unavailable",
+        statusText: ui("Settings unavailable", "操作未完成"),
         statusKind: .operationError
     )
 }
@@ -127,6 +176,9 @@ struct AppPreferences: Codable {
     }
 
     static func supportDirectory() -> URL {
+        if let path = ProcessInfo.processInfo.environment["CODEX_QUOTA_BAR_SUPPORT_DIR"], !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
         return base.appendingPathComponent("CodexQuotaBar", isDirectory: true)
@@ -399,10 +451,18 @@ final class QuotaHistoryStore {
     }
 
     private func projectedText(entries: [QuotaHistoryEntry], currentRate: Double?) -> String {
-        guard let latest = entries.last, let left = latest.fiveHourLeft, let rate = currentRate, rate > 0 else {
-            return "Projected 5h: --"
+        guard let latest = entries.last, let left = latest.fiveHourLeft else {
+            return "Projected 5h: " + ui("Insufficient data", "数据不足")
+        }
+        if left == 0 { return "Projected 5h: " + ui("Exhausted", "额度已用尽") }
+        guard let rate = currentRate, rate > 0 else {
+            return "Projected 5h: " + ui("Insufficient data", "数据不足")
         }
         let hours = Double(left) / rate
+        if let reset = QuotaDisplay.date(latest.fiveHourReset), reset > Date(),
+           Date().addingTimeInterval(hours * 3600) >= reset {
+            return "Projected 5h: " + ui("Until reset", "预计够用至重置")
+        }
         if hours < 1 {
             return "Projected 5h: ~\(max(1, Int(round(hours * 60))))m"
         }
@@ -437,6 +497,7 @@ final class MenuQuotaRowView: NSView {
     private static let periodValueGap: CGFloat = 7
     private static let valueResetGap: CGFloat = 8
 
+    private let indicator = NSView()
     private let period: String
     private let periodLabel: NSTextField
     private let valueLabel = NSTextField(labelWithString: "--%")
@@ -454,14 +515,19 @@ final class MenuQuotaRowView: NSView {
 
         periodLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         valueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
-        valueLabel.alignment = .left
+        valueLabel.alignment = .right
         resetLabel.font = NSFont.systemFont(ofSize: 11)
-        resetLabel.alignment = .left
+        resetLabel.alignment = .right
         resetLabel.lineBreakMode = .byTruncatingTail
         resetLabel.maximumNumberOfLines = 1
         resetLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         resetLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        indicator.wantsLayer = true
+        indicator.layer?.cornerRadius = 2
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        indicator.setAccessibilityElement(false)
+        addSubview(indicator)
         for field in [periodLabel, valueLabel, resetLabel] {
             field.isBordered = false
             field.drawsBackground = false
@@ -472,7 +538,11 @@ final class MenuQuotaRowView: NSView {
         }
 
         NSLayoutConstraint.activate([
-            periodLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset),
+            indicator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset),
+            indicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            indicator.widthAnchor.constraint(equalToConstant: 4),
+            indicator.heightAnchor.constraint(equalToConstant: 4),
+            periodLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset + 12),
             periodLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             periodLabel.widthAnchor.constraint(equalToConstant: Self.periodColumnWidth),
             valueLabel.leadingAnchor.constraint(equalTo: periodLabel.trailingAnchor, constant: Self.periodValueGap),
@@ -492,12 +562,21 @@ final class MenuQuotaRowView: NSView {
         NSSize(width: Self.menuWidth, height: Self.menuHeight)
     }
 
-    func update(remaining: Int?, reset: String?) {
+    func update(remaining: Int?, reset: String?, fullReset: String? = nil) {
         let resetText = reset ?? "--"
+        if let date = QuotaDisplay.date(fullReset) {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .long
+            toolTip = QuotaDisplay.resetLabel(formatter.string(from: date))
+        } else {
+            toolTip = QuotaDisplay.resetLabel(resetText)
+        }
         guard let remaining else {
             valueLabel.stringValue = "--%"
-            valueLabel.textColor = NSColor(calibratedRed: 0.55, green: 0.69, blue: 0.79, alpha: 0.75)
-            resetLabel.stringValue = "reset \(resetText)"
+            valueLabel.textColor = .secondaryLabelColor
+            indicator.layer?.backgroundColor = NSColor.secondaryLabelColor.cgColor
+            resetLabel.stringValue = QuotaDisplay.resetLabel(resetText)
             resetLabel.textColor = .secondaryLabelColor
             setAccessibilityValue("\(period) quota unknown, reset \(resetText)")
             return
@@ -505,18 +584,19 @@ final class MenuQuotaRowView: NSView {
 
         let clamped = max(0, min(100, remaining))
         valueLabel.stringValue = "\(clamped)%"
-        valueLabel.textColor = MenuQuotaRowView.color(for: clamped)
-        resetLabel.stringValue = "reset \(resetText)"
+        valueLabel.textColor = .labelColor
+        indicator.layer?.backgroundColor = MenuQuotaRowView.color(for: clamped).cgColor
+        resetLabel.stringValue = QuotaDisplay.resetLabel(resetText)
         resetLabel.textColor = .secondaryLabelColor
         setAccessibilityValue("\(period) quota \(clamped) percent, reset \(resetText)")
     }
 
     private static func color(for percent: Int) -> NSColor {
         if percent > 60 {
-            return NSColor(calibratedRed: 0.28, green: 0.78, blue: 0.48, alpha: 1.0)
+            return NSColor(calibratedRed: 0.14, green: 0.51, blue: 0.29, alpha: 1.0)
         }
         if percent >= 20 {
-            return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.28, alpha: 1.0)
+            return NSColor(calibratedRed: 0.72, green: 0.42, blue: 0, alpha: 1.0)
         }
         return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
     }
@@ -589,50 +669,51 @@ final class MenuPeriodControlView: NSView {
 
 final class MenuDetailRowView: NSView {
     static let menuWidth: CGFloat = 320
-    static let menuHeight: CGFloat = 22
-
-    private let label: NSTextField
+    static let menuHeight: CGFloat = 24
+    private let label = NSTextField(labelWithString: "")
+    private let valueLabel = NSTextField(labelWithString: "")
+    private var leading: NSLayoutConstraint!
 
     init(text: String = "") {
-        label = NSTextField(labelWithString: text)
         super.init(frame: NSRect(x: 0, y: 0, width: Self.menuWidth, height: Self.menuHeight))
-
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
-        setAccessibilityLabel("Usage detail")
-        setAccessibilityValue(text)
-
-        label.font = NSFont.systemFont(ofSize: 12)
-        label.lineBreakMode = .byTruncatingTail
-        label.maximumNumberOfLines = 1
+        for field in [label, valueLabel] {
+            field.font = NSFont.systemFont(ofSize: 13)
+            field.lineBreakMode = .byTruncatingTail
+            field.maximumNumberOfLines = 1
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.setAccessibilityElement(false)
+            addSubview(field)
+        }
+        valueLabel.alignment = .right
+        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        label.isBordered = false
-        label.drawsBackground = false
-        label.isEditable = false
-        label.isSelectable = false
-        label.setAccessibilityElement(false)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-
+        leading = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+            leading,
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            valueLabel.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 8),
+            valueLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            valueLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+        update(text: text)
     }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: Self.menuWidth, height: Self.menuHeight)
-    }
-
-    func update(text: String) {
-        label.stringValue = text
-        setAccessibilityValue(text)
+    required init?(coder: NSCoder) { nil }
+    override var intrinsicContentSize: NSSize { NSSize(width: Self.menuWidth, height: Self.menuHeight) }
+    func update(text: String) { update(label: text, value: "") }
+    func update(label title: String, value: String, emphasized: Bool = false, nested: Bool = false, help: String? = nil) {
+        label.stringValue = title
+        valueLabel.stringValue = value
+        label.font = .systemFont(ofSize: 13, weight: emphasized ? .semibold : .regular)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: emphasized ? .semibold : .regular)
+        label.textColor = nested ? .secondaryLabelColor : .labelColor
+        valueLabel.textColor = label.textColor
+        leading.constant = nested ? 26 : 14
+        toolTip = help ?? "\(title) \(value)"
+        setAccessibilityLabel(title)
+        setAccessibilityValue(value)
+        setAccessibilityHelp(toolTip)
     }
 }
 
@@ -685,7 +766,7 @@ final class MenuStatusRowView: NSView {
 }
 
 struct StatusItemRenderer {
-    static let size = NSSize(width: 84, height: 24)
+    static let size = NSSize(width: 88, height: 24)
 
     static func image(fiveHour: Int?, sevenDay: Int?, loading: Bool, ok: Bool, appearance: NSAppearance?) -> NSImage {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
@@ -712,7 +793,7 @@ struct StatusItemRenderer {
     private static func drawRow(label: String, percent: Int?, y: CGFloat, loading: Bool, ok: Bool, appearance: NSAppearance?) {
         let foreground = foregroundColor(for: appearance)
         let labelAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 8.2, weight: .bold),
+            .font: NSFont.systemFont(ofSize: 9, weight: .medium),
             .foregroundColor: foreground
         ]
         NSString(string: label).draw(at: NSPoint(x: 0, y: y), withAttributes: labelAttributes)
@@ -725,16 +806,18 @@ struct StatusItemRenderer {
             if index < filled {
                 color.setFill()
             } else {
-                NSColor.systemBlue.withAlphaComponent(0.22).setFill()
+                foreground.withAlphaComponent(0.18).setFill()
             }
             bar.fill()
         }
 
         let percentAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 8.2, weight: .bold),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
             .foregroundColor: foreground
         ]
-        NSString(string: percentText(percent)).draw(at: NSPoint(x: 60, y: y), withAttributes: percentAttributes)
+        let text = NSString(string: percentText(percent))
+        let width = text.size(withAttributes: percentAttributes).width
+        text.draw(at: NSPoint(x: Self.size.width - 1 - width, y: y), withAttributes: percentAttributes)
     }
 
     private static func foregroundColor(for appearance: NSAppearance?) -> NSColor {
@@ -752,10 +835,10 @@ struct StatusItemRenderer {
             return NSColor(calibratedRed: 0.55, green: 0.69, blue: 0.79, alpha: 0.55)
         }
         if percent! > 60 {
-            return NSColor(calibratedRed: 0.28, green: 0.78, blue: 0.48, alpha: 1.0)
+            return NSColor(calibratedRed: 0.14, green: 0.51, blue: 0.29, alpha: 1.0)
         }
         if percent! >= 20 {
-            return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.28, alpha: 1.0)
+            return NSColor(calibratedRed: 0.72, green: 0.42, blue: 0, alpha: 1.0)
         }
         return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
     }
@@ -771,9 +854,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let menu = NSMenu()
     private let usageMenu = NSMenu()
     private let settingsMenu = NSMenu()
-    private let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
-    private let floatingBallItem = NSMenuItem(title: "Show Floating Ball", action: #selector(toggleFloatingBall), keyEquivalent: "b")
-    private let openAtLoginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleOpenAtLogin), keyEquivalent: "l")
+    private let refreshItem = NSMenuItem(title: ui("Refresh", "刷新"), action: #selector(refreshNow), keyEquivalent: "r")
+    private let floatingBallItem = NSMenuItem(title: ui("Show Floating Ball", "显示悬浮球"), action: #selector(toggleFloatingBall), keyEquivalent: "b")
+    private let openAtLoginItem = NSMenuItem(title: ui("Open at Login", "登录时启动"), action: #selector(toggleOpenAtLogin), keyEquivalent: "l")
     private let fiveHourRow = MenuQuotaRowView(period: "5h")
     private let sevenDayRow = MenuQuotaRowView(period: "7d")
     private lazy var fiveHourItem: NSMenuItem = {
@@ -786,16 +869,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item.view = sevenDayRow
         return item
     }()
-    private let trendHeaderItem = NSMenuItem(title: "Usage trend", action: nil, keyEquivalent: "")
+    private let trendHeaderItem = NSMenuItem(title: ui("Usage trend", "额度趋势"), action: nil, keyEquivalent: "")
     private let fiveHourTrendItem = NSMenuItem(title: "5h current rate: --", action: nil, keyEquivalent: "")
     private let sevenDayTrendItem = NSMenuItem(title: "7d current rate: --", action: nil, keyEquivalent: "")
     private let projectedItem = NSMenuItem(title: "Projected 5h: --", action: nil, keyEquivalent: "")
-    private let periodControlView = MenuPeriodControlView()
-    private lazy var tokenRangeItem: NSMenuItem = {
-        let item = NSMenuItem(title: "Period", action: nil, keyEquivalent: "")
-        item.view = periodControlView
-        return item
-    }()
+    private let periodMenu = NSMenu()
+    private let tokenRangeItem = NSMenuItem(title: "Period", action: nil, keyEquivalent: "")
+    private let cyclePeriodItem = NSMenuItem(title: "Next period", action: #selector(cycleUsageRange), keyEquivalent: "t")
     private let tokenTotalItem = NSMenuItem(title: "Token: --", action: nil, keyEquivalent: "")
     private let inputTokenItem = NSMenuItem(title: "Input --", action: nil, keyEquivalent: "")
     private let cachedTokenItem = NSMenuItem(title: "Cached --", action: nil, keyEquivalent: "")
@@ -807,18 +887,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let fiveHourTrendView = MenuDetailRowView()
     private let sevenDayTrendView = MenuDetailRowView()
     private let projectedView = MenuDetailRowView()
-    private let usageStatisticsItem = NSMenuItem(title: "Usage statistics", action: nil, keyEquivalent: "")
-    private let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
-    private let clearLocalDataItem = NSMenuItem(title: "Clear Local Data...", action: #selector(clearLocalData), keyEquivalent: "")
+    private let usageStatisticsItem = NSMenuItem(title: ui("Usage statistics", "用量统计"), action: nil, keyEquivalent: "")
+    private let settingsItem = NSMenuItem(title: ui("Settings", "设置"), action: nil, keyEquivalent: "")
+    private let clearLocalDataItem = NSMenuItem(title: ui("Clear Local Data...", "将本地数据移到废纸篓…"), action: #selector(clearLocalData), keyEquivalent: "")
     private let stateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let stateView = MenuStatusRowView()
-    private lazy var openChatGPTItem = NSMenuItem(title: "Open Codex", action: #selector(openChatGPT), keyEquivalent: "o")
-    private lazy var quitItem = NSMenuItem(title: "Quit CodexQuotaBar", action: #selector(quit), keyEquivalent: "q")
+    private lazy var openChatGPTItem = NSMenuItem(title: ui("Open Codex", "打开 Codex"), action: #selector(openChatGPT), keyEquivalent: "o")
+    private lazy var quitItem = NSMenuItem(title: ui("Quit CodexQuotaBar", "退出 CodexQuotaBar"), action: #selector(quit), keyEquivalent: "q")
     private let historyStore = QuotaHistoryStore()
     private var timer: Timer?
     private var retryTimer: Timer?
+    private var retryBudget = RefreshRetryBudget()
+    private var isClearingData = false
     private var isRefreshing = false
     private var isUsageRefreshing = false
+    private var usageRefreshFailed = false
     private var latestSnapshot: QuotaSnapshot?
     private var latestUsage: UsageSnapshot?
     private var lastValidSnapshot: QuotaSnapshot?
@@ -867,12 +950,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appearanceObservation = button.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
             guard let self else { return }
             self.lastRenderedAppearanceKey = nil
-            self.updateButton(snapshot: self.latestSnapshot, loading: self.isRefreshing && self.latestSnapshot == nil)
+            self.updateButton(snapshot: QuotaDisplay.snapshot(latest: self.latestSnapshot, lastValid: self.lastValidSnapshot), loading: self.isRefreshing && self.lastValidSnapshot == nil)
         }
     }
 
     private func configureMenu() {
         refreshItem.target = self
+        menu.autoenablesItems = false
         usageStatisticsItem.submenu = usageMenu
         settingsItem.submenu = settingsMenu
         menu.minimumWidth = MenuQuotaRowView.menuWidth
@@ -905,9 +989,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sevenDayItem.title = "7d quota"
         sevenDayItem.setAccessibilityLabel("7-day quota")
 
-        periodControlView.onCycle = { [weak self] in
-            self?.cycleUsageRange()
+        tokenRangeItem.submenu = periodMenu
+        for range in ["today", "7d", "30d", "month", "all"] {
+            let item = NSMenuItem(title: usageRangeLabel(range), action: #selector(selectUsageRange(_:)), keyEquivalent: "")
+            item.representedObject = range
+            item.target = self
+            periodMenu.addItem(item)
         }
+        periodMenu.addItem(.separator())
+        cyclePeriodItem.title = ui("Next period", "下一个周期")
+        cyclePeriodItem.target = self
+        periodMenu.addItem(cyclePeriodItem)
         usageMenu.addItem(tokenRangeItem)
         usageMenu.addItem(tokenTotalItem)
         usageMenu.addItem(inputTokenItem)
@@ -945,9 +1037,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func refreshNow() {
-        guard !isRefreshing else {
+        startRefresh(isRetry: false)
+    }
+
+    private func startRefresh(isRetry: Bool) {
+        guard !isRefreshing && !isClearingData else {
             return
         }
+        if !isRetry { retryBudget.beginCycle() }
+        retryTimer?.invalidate()
+        retryTimer = nil
         isRefreshing = true
         statusPresentation = .refreshing(keeping: statusPresentation)
         applyStatusPresentation()
@@ -965,7 +1064,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func refreshUsage() {
-        guard !isUsageRefreshing else { return }
+        guard !isUsageRefreshing && !isClearingData else { return }
         isUsageRefreshing = true
         updateUsageItems()
         updateDetailText()
@@ -974,7 +1073,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isUsageRefreshing = false
-                self.latestUsage = usage
+                self.usageRefreshFailed = usage?.ok != true
+                if usage?.ok == true || self.latestUsage == nil { self.latestUsage = usage }
                 self.updateUsageItems()
                 self.updateDetailText()
             }
@@ -1011,6 +1111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "TMPDIR": NSTemporaryDirectory(),
             "USER": NSUserName()
         ]
+        if let support = ProcessInfo.processInfo.environment["CODEX_QUOTA_BAR_SUPPORT_DIR"] {
+            process.environment?["CODEX_QUOTA_BAR_SUPPORT_DIR"] = support
+        }
         let output = Pipe()
         process.standardOutput = output
         process.standardError = Pipe()
@@ -1063,6 +1166,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "USER": NSUserName()
         ]
 
+        if let support = ProcessInfo.processInfo.environment["CODEX_QUOTA_BAR_SUPPORT_DIR"] {
+            process.environment?["CODEX_QUOTA_BAR_SUPPORT_DIR"] = support
+        }
         let output = Pipe()
         process.standardOutput = output
         process.standardError = Pipe()
@@ -1122,9 +1228,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         latestSnapshot = snapshot
 
         guard let snapshot else {
-            statusPresentation = .refreshFailure(lastUpdated: lastValidUpdateText())
+            statusPresentation = .refreshFailure(lastUpdated: lastValidUpdateText(), hasData: lastValidSnapshot != nil)
             applyStatusPresentation()
             applyDisplayedSnapshot(lastValidSnapshot)
+            scheduleRetryIfNeeded()
             updateDetailText()
             return
         }
@@ -1139,7 +1246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             applyDisplayedSnapshot(snapshot)
             updateTrendItems()
         } else {
-            statusPresentation = .refreshFailure(lastUpdated: lastValidUpdateText())
+            statusPresentation = .refreshFailure(lastUpdated: lastValidUpdateText(), hasData: lastValidSnapshot != nil)
             applyStatusPresentation()
             applyDisplayedSnapshot(lastValidSnapshot)
             scheduleRetryIfNeeded()
@@ -1150,20 +1257,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func applyDisplayedSnapshot(_ snapshot: QuotaSnapshot?) {
         updateButton(snapshot: snapshot, loading: snapshot == nil && latestSnapshot == nil)
         floatingView?.snapshot = snapshot
-        fiveHourRow.update(remaining: snapshot?.fiveHourLeft, reset: shortDateTime(snapshot?.fiveHourReset))
-        sevenDayRow.update(remaining: snapshot?.sevenDayLeft, reset: shortDateTime(snapshot?.sevenDayReset))
+        fiveHourRow.update(remaining: snapshot?.fiveHourLeft, reset: shortDateTime(snapshot?.fiveHourReset), fullReset: snapshot?.fiveHourReset)
+        sevenDayRow.update(remaining: snapshot?.sevenDayLeft, reset: shortDateTime(snapshot?.sevenDayReset), fullReset: snapshot?.sevenDayReset)
     }
 
     private func updateTrendItems() {
         let trends = historyStore.trends()
-        let fiveHourText = menuTrendText(period: "5h", metric: trends.fiveHour, unit: "h")
-        let sevenDayText = menuTrendText(period: "7d", metric: trends.sevenDay, unit: "day")
-        fiveHourTrendItem.title = fiveHourText
-        sevenDayTrendItem.title = sevenDayText
-        fiveHourTrendView.update(text: fiveHourText)
-        sevenDayTrendView.update(text: sevenDayText)
-        projectedItem.title = trends.projection
-        projectedView.update(text: trends.projection)
+        fiveHourTrendView.update(label: ui("5h consumption", "5h 消耗"), value: menuRateText(trends.fiveHour.currentRate, unit: "h"),
+                                 help: menuTrendText(period: "5h", metric: trends.fiveHour, unit: "h"))
+        sevenDayTrendView.update(label: ui("7d consumption", "7d 消耗"), value: menuRateText(trends.sevenDay.currentRate, unit: "day"),
+                                help: menuTrendText(period: "7d", metric: trends.sevenDay, unit: "day"))
+        projectedView.update(label: ui("5h estimate", "5h 预计可用"), value: trends.projection.replacingOccurrences(of: "Projected 5h: ", with: ""),
+                             help: ui("Estimated from recent quota consumption; not Token usage.", "根据近期额度消耗速率估计，并非 Token 用量。"))
         usageMenu.update()
     }
 
@@ -1174,33 +1279,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func updateUsageItems() {
         let label = usageRangeLabel(selectedUsageRange)
-        periodControlView.update(title: "Period: \(label)")
-        guard let usage = latestUsage, usage.ok, let summary = usage.ranges[selectedUsageRange] else {
-            let tokenText = isUsageRefreshing ? "Token: Scanning local records..." : "Token --"
-            tokenTotalItem.title = tokenText
-            inputTokenItem.title = "Input --"
-            cachedTokenItem.title = "Cached --"
-            outputTokenItem.title = "Output --"
-            tokenTotalView.update(text: tokenText)
-            inputTokenView.update(text: "Input --")
-            cachedTokenView.update(text: "Cached --")
-            outputTokenView.update(text: "Output --")
-            usageMenu.update()
-            return
+        tokenRangeItem.title = ui("Period: \(label)", "统计周期：\(label)")
+        for item in periodMenu.items {
+            item.state = (item.representedObject as? String) == selectedUsageRange ? .on : .off
         }
-        let tokenText = "Token \(formatTokens(summary.totalTokens))"
-        let inputText = "Input \(formatTokens(summary.inputTokens))"
-        let cachedText = "Cached \(formatTokens(summary.cachedInputTokens))"
-        let outputText = "Output \(formatTokens(summary.outputTokens))"
-        tokenTotalItem.title = tokenText
-        inputTokenItem.title = inputText
-        cachedTokenItem.title = cachedText
-        outputTokenItem.title = outputText
-        tokenTotalView.update(text: tokenText)
-        inputTokenView.update(text: inputText)
-        cachedTokenView.update(text: cachedText)
-        outputTokenView.update(text: outputText)
+        let summary = latestUsage?.ok == true ? latestUsage?.ranges[selectedUsageRange] : nil
+        let total = summary.map { formatTokens($0.totalTokens) } ?? "--"
+        let scanning = isUsageRefreshing ? ui("Updating local statistics…", "正在更新本地统计…") : nil
+        tokenTotalView.update(label: ui("Local Token", "本地 Token"), value: total, emphasized: true,
+                              help: scanning ?? summary.map { "\($0.totalTokens) Token" })
+        inputTokenView.update(label: ui("Input", "输入"), value: summary.map { formatTokens($0.inputTokens) } ?? "--",
+                             help: summary.map { "\($0.inputTokens)" })
+        cachedTokenView.update(label: ui("Of which cached", "其中缓存"), value: summary.map { formatTokens($0.cachedInputTokens) } ?? "--", nested: true,
+                              help: summary.map { ui("Included in input: \($0.cachedInputTokens)", "包含在输入中：\($0.cachedInputTokens)") })
+        outputTokenView.update(label: ui("Output", "输出"), value: summary.map { formatTokens($0.outputTokens) } ?? "--",
+                              help: summary.map { "\($0.outputTokens)" })
+        tokenTotalItem.title = scanning ?? ui("Local Token \(total)", "本地 Token \(total)")
+        if usageRefreshFailed && !isUsageRefreshing {
+            let previous = QuotaDisplay.updateTime(latestUsage?.updatedAt) ?? "--"
+            tokenTotalView.update(label: ui("Local Token · saved", "本地 Token · 上次数据"), value: total, emphasized: true,
+                                  help: ui("Update failed. Last update: \(previous)", "更新失败，上次更新：\(previous)"))
+        }
+        if isUsageRefreshing {
+            tokenTotalView.update(label: ui("Local Token · updating", "本地 Token · 更新中"), value: total, emphasized: true, help: scanning)
+        }
         usageMenu.update()
+    }
+
+    @objc private func selectUsageRange(_ sender: NSMenuItem) {
+        guard let range = sender.representedObject as? String,
+              ["today", "7d", "30d", "month", "all"].contains(range) else { return }
+        preferences.usageRange = range
+        preferences.save()
+        updateUsageItems()
     }
 
     @objc private func cycleUsageRange() {
@@ -1214,11 +1325,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func usageRangeLabel(_ value: String) -> String {
         switch value {
-        case "today": return "Today"
-        case "30d": return "30 days"
-        case "month": return "This month"
-        case "all": return "All"
-        default: return "7 days"
+        case "today": return ui("Today", "今天")
+        case "30d": return ui("30 days", "最近 30 天")
+        case "month": return ui("This month", "本月")
+        case "all": return ui("All", "全部记录")
+        default: return ui("7 days", "最近 7 天")
         }
     }
 
@@ -1236,29 +1347,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func menuRateText(_ value: Double?, unit: String) -> String {
         guard let value else {
-            return "rate --"
+            return "--"
         }
-        return String(format: "rate -%.1f%%/%@", value, unit)
+        return String(format: ui("%.1f pp/%@", "%.1f 百分点/%@"), value, unit == "h" ? ui("h", "小时") : ui("day", "天"))
     }
 
     private func menuComparisonText(current: Double?, previous: Double?) -> String {
         guard let current, let previous else {
-            return "prev --"
+            return ui("Previous period: insufficient data", "上期：数据不足")
         }
         let delta = current - previous
         if abs(delta) < 0.05 {
-            return "prev flat"
+            return ui("Unchanged from previous period", "与上期持平")
         }
-        return String(format: "prev %@%.1f", delta > 0 ? "+" : "", delta)
+        return String(format: ui("vs previous: %@%.1f pp", "较上期：%@%.1f 个百分点"), delta > 0 ? "+" : "", delta)
     }
 
     private func scheduleRetryIfNeeded() {
-        guard retryTimer == nil else {
+        guard retryTimer == nil, retryBudget.consume() else {
             return
         }
         retryTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
             self?.retryTimer = nil
-            self?.refreshNow()
+            self?.startRefresh(isRetry: true)
         }
     }
 
@@ -1326,20 +1437,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func lastValidUpdateText() -> String? {
-        guard let value = lastValidSnapshot?.updatedAt else {
-            return nil
-        }
-        let text = shortTime(value)
-        return text == "--" || text == value ? nil : text
+        QuotaDisplay.updateTime(lastValidSnapshot?.updatedAt)
     }
 
     private func shortDateTime(_ value: String?) -> String {
-        guard let value, !value.isEmpty else { return "--" }
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: value) else { return value }
-        let output = DateFormatter()
-        output.dateFormat = "MM-dd HH:mm"
-        return output.string(from: date)
+        QuotaDisplay.resetTime(value)
     }
 
     private func statusToolTip(snapshot: QuotaSnapshot?) -> String {
@@ -1358,6 +1460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let text = detailText()
         statusItem.button?.toolTip = text
         floatingView?.detailText = text
+        floatingView?.statusText = statusPresentation.statusText
     }
 
     private func unavailableSnapshot(error: String) -> QuotaSnapshot {
@@ -1402,10 +1505,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func toggleFloatingBall() {
         if let floatingPanel, floatingPanel.isVisible {
+            floatingView?.closeDetail()
             floatingPanel.orderOut(nil)
             preferences.showFloatingBall = false
             preferences.save()
-            floatingBallItem.title = "Show Floating Ball"
+            floatingBallItem.title = ui("Show Floating Ball", "显示悬浮球")
             return
         }
 
@@ -1437,7 +1541,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             view.onTogglePinnedDetail = { [weak view] in
                 view?.togglePinnedDetail()
             }
-            view.snapshot = latestSnapshot
+            view.snapshot = QuotaDisplay.snapshot(latest: latestSnapshot, lastValid: lastValidSnapshot)
             view.detailText = detailText()
             panel.contentView = view
 
@@ -1446,13 +1550,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         floatingPanel?.makeKeyAndOrderFront(nil)
-        floatingBallItem.title = "Hide Floating Ball"
+        floatingBallItem.title = ui("Hide Floating Ball", "隐藏悬浮球")
     }
 
     private func installDetailDismissMonitors() {
-        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
             guard let self else { return event }
-            if event.window !== self.floatingPanel {
+            if event.type == .keyDown {
+                if event.keyCode == 53, self.floatingView?.detailIsVisible == true {
+                    self.floatingView?.dismissPinnedDetail(force: true)
+                    return nil
+                }
+                return event
+            }
+            if event.window !== self.floatingPanel && self.floatingView?.ownsDetailWindow(event.window) != true {
                 self.floatingView?.dismissPinnedDetail()
             }
             return event
@@ -1506,18 +1617,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateOpenAtLoginMenuItem() {
         let enabled = SMAppService.mainApp.status == .enabled
         openAtLoginItem.state = enabled ? .on : .off
-        openAtLoginItem.title = enabled ? "Open at Login: On" : "Open at Login: Off"
+        openAtLoginItem.title = ui("Open at Login", "登录时启动")
     }
 
     @objc private func clearLocalData() {
+        guard !isRefreshing && !isUsageRefreshing else {
+            let alert = NSAlert()
+            alert.messageText = ui("Wait for refresh to finish", "请等待刷新完成")
+            alert.runModal()
+            return
+        }
+        isClearingData = true
+        defer { isClearingData = false }
         let alert = NSAlert()
-        alert.messageText = "Clear CodexQuotaBar local data?"
-        alert.informativeText = "This moves quota history, the local Token index, and UI preferences to Trash. It does not touch ChatGPT, Codex CLI, ~/.codex, prompts, or projects."
+        alert.messageText = ui("Move local data to Trash?", "将本地数据移到废纸篓？")
+        alert.informativeText = ui("Moves only the app's quota history, Token index and preferences to Trash. Recoverable from Trash. Codex data and projects are untouched.", "仅将本工具的额度历史、Token 索引和偏好移到废纸篓，可从废纸篓恢复。不会处理 Codex 数据或项目。")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
+        alert.informativeText += "\n\n" + AppPreferences.supportDirectory().path
+        alert.addButton(withTitle: ui("Cancel", "取消"))
+        alert.addButton(withTitle: ui("Move to Trash", "移到废纸篓"))
 
-        guard alert.runModal() == .alertFirstButtonReturn else {
+        guard alert.runModal() == .alertSecondButtonReturn else {
             return
         }
 
@@ -1540,7 +1660,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 }
 
+final class QuotaDetailPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 final class FloatingBallView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(ui("Codex quota details", "Codex 额度详情"))
+        setAccessibilityHelp(ui("Press to pin details. Drag to move.", "点击固定详情，拖动移动。"))
+    }
+    required init?(coder: NSCoder) { nil }
+    override func accessibilityPerformPress() -> Bool {
+        togglePinnedDetail()
+        return true
+    }
+
     private static let graphiteBallColor = NSColor(
         calibratedRed: 36.0 / 255.0,
         green: 38.0 / 255.0,
@@ -1574,9 +1711,20 @@ final class FloatingBallView: NSView {
         }
     }
 
+    private var pendingShow: DispatchWorkItem?
+    private var pendingHide: DispatchWorkItem?
+    private var pointerInDetail = false
+    private var visibilityGeneration = 0
+    var detailIsVisible: Bool { hoverPanel?.isVisible == true }
+    func ownsDetailWindow(_ candidate: NSWindow?) -> Bool { candidate != nil && candidate === hoverPanel }
+    var statusText: String? {
+        didSet { if oldValue != statusText && detailIsVisible { showHoverPanel() } }
+    }
+
     var detailText = "5h: -- · reset --\n7d: -- · reset --" {
         didSet {
             toolTip = detailText
+            setAccessibilityValue(detailText)
             if hoverPanel?.isVisible == true, oldValue != detailText {
                 showHoverPanel()
             }
@@ -1604,14 +1752,30 @@ final class FloatingBallView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         pointerInside = true
-        showHoverPanel()
+        pendingHide?.cancel()
+        pendingShow?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pointerInside else { return }
+            self.showHoverPanel()
+        }
+        pendingShow = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
     }
 
     override func mouseExited(with event: NSEvent) {
         pointerInside = false
-        if !detailPinned {
-            hideHoverPanel()
+        pendingShow?.cancel()
+        scheduleHide()
+    }
+
+    private func scheduleHide() {
+        pendingHide?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.pointerInside, !self.pointerInDetail, !self.detailPinned else { return }
+            self.hideHoverPanel()
         }
+        pendingHide = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -1625,20 +1789,29 @@ final class FloatingBallView: NSView {
     }
 
     func togglePinnedDetail() {
+        pendingShow?.cancel()
+        pendingHide?.cancel()
         detailPinned.toggle()
         if detailPinned {
             showHoverPanel()
+            hoverPanel?.makeKey()
         } else {
             hideHoverPanel()
         }
     }
 
-    func dismissPinnedDetail() {
-        guard detailPinned else { return }
+    func dismissPinnedDetail(force: Bool = false) {
+        guard detailPinned || force else { return }
         detailPinned = false
-        if !pointerInside {
-            hideHoverPanel()
-        }
+        pendingShow?.cancel()
+        pendingHide?.cancel()
+        hideHoverPanel()
+    }
+
+    func closeDetail() {
+        pointerInside = false
+        pointerInDetail = false
+        dismissPinnedDetail(force: true)
     }
 
     private func showHoverPanel() {
@@ -1646,7 +1819,7 @@ final class FloatingBallView: NSView {
             return
         }
 
-        let size = HoverInfoView.size(for: detailText)
+        let size = NSSize(width: 252, height: statusText == nil ? 68 : 90)
         let screenFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
         var origin = NSPoint(x: window.frame.maxX + 8, y: window.frame.maxY - size.height)
         if origin.x + size.width > screenFrame.maxX - 8 {
@@ -1655,7 +1828,7 @@ final class FloatingBallView: NSView {
         origin.x = min(max(origin.x, screenFrame.minX + 8), screenFrame.maxX - size.width - 8)
         origin.y = min(max(origin.y, screenFrame.minY + 8), screenFrame.maxY - size.height - 8)
 
-        let panel = hoverPanel ?? NSPanel(
+        let panel = hoverPanel ?? QuotaDetailPanel(
             contentRect: NSRect(origin: origin, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -1670,20 +1843,42 @@ final class FloatingBallView: NSView {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
-        panel.ignoresMouseEvents = true
+        panel.ignoresMouseEvents = false
         let contentView = hoverView ?? HoverInfoView(frame: NSRect(origin: .zero, size: size), text: detailText)
         contentView.frame = NSRect(origin: .zero, size: size)
         contentView.update(text: detailText)
+        contentView.statusText = statusText
+        contentView.isPinned = detailPinned
+        contentView.onPointerChange = { [weak self] inside in
+            guard let self else { return }
+            self.pointerInDetail = inside
+            if inside { self.pendingHide?.cancel() } else { self.scheduleHide() }
+        }
         if panel.contentView !== contentView {
             panel.contentView = contentView
         }
         hoverPanel = panel
         hoverView = contentView
+        visibilityGeneration += 1
+        if !panel.isVisible { panel.alphaValue = 0 }
         panel.orderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
+            panel.animator().alphaValue = 1
+        }
     }
 
     private func hideHoverPanel() {
-        hoverPanel?.orderOut(nil)
+        guard let panel = hoverPanel else { return }
+        visibilityGeneration += 1
+        let generation = visibilityGeneration
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self, weak panel] in
+            guard self?.visibilityGeneration == generation else { return }
+            panel?.orderOut(nil)
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1779,6 +1974,17 @@ final class HoverInfoView: NSView {
     private static let resetRect = NSRect(x: 101, y: 0, width: 137, height: 20)
 
     private var text: String
+    var onPointerChange: ((Bool) -> Void)?
+    var statusText: String? { didSet { needsDisplay = true } }
+    var isPinned = false { didSet { needsDisplay = true } }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { onPointerChange?(true) }
+    override func mouseExited(with event: NSEvent) { onPointerChange?(false) }
 
     init(frame frameRect: NSRect, text: String) {
         self.text = text
@@ -1800,19 +2006,27 @@ final class HoverInfoView: NSView {
         dirtyRect.fill()
 
         let bubble = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8)
-        NSColor.black.withAlphaComponent(0.78).setFill()
+        NSColor(calibratedRed: 0.15, green: 0.16, blue: 0.18, alpha: NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? 1 : 0.96).setFill()
         bubble.fill()
-        NSColor.white.withAlphaComponent(0.10).setStroke()
+        NSColor.white.withAlphaComponent(isPinned ? 0.30 : 0.14).setStroke()
         bubble.lineWidth = 1
         bubble.stroke()
 
         for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).prefix(2).enumerated() {
             let row = Self.parse(String(line))
-            let rowY: CGFloat = index == 0 ? 35 : 10
+            let rowY: CGFloat = (index == 0 ? 35 : 10) + (statusText == nil ? 0 : 22)
             draw(row.period, in: Self.periodRect.offsetBy(dx: 0, dy: rowY), font: Self.periodFont, color: .white)
-            draw(row.value, in: Self.valueRect.offsetBy(dx: 0, dy: rowY), font: Self.valueFont, color: Self.color(for: row.percent), alignment: .left)
-            draw("reset \(row.reset)", in: Self.resetRect.offsetBy(dx: 0, dy: rowY), font: Self.resetFont, color: .white.withAlphaComponent(0.70))
+            draw(row.value, in: Self.valueRect.offsetBy(dx: 0, dy: rowY), font: Self.valueFont, color: row.percent == nil ? .lightGray : .white, alignment: .right)
+            draw(QuotaDisplay.resetLabel(row.reset), in: Self.resetRect.offsetBy(dx: 0, dy: rowY), font: Self.resetFont, color: .white.withAlphaComponent(0.76), alignment: .right)
         }
+        if let statusText {
+            draw(statusText, in: NSRect(x: 14, y: 8, width: 224, height: 16), font: .systemFont(ofSize: 10), color: .lightGray)
+        }
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(ui("Quota details", "额度详情"))
+        setAccessibilityValue(text + (statusText.map { "\n" + $0 } ?? ""))
+        setAccessibilityHelp(isPinned ? ui("Pinned. Escape to close.", "已固定，按 Esc 关闭。") : ui("Hover details", "悬停详情"))
     }
 
     static func size(for text: String) -> NSSize {
@@ -1890,3 +2104,49 @@ final class HoverInfoView: NSView {
         return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
     }
 }
+
+#if UI_TESTING
+extension AppDelegate {
+    func verifyMenuBehavior(valid: QuotaSnapshot, failed: QuotaSnapshot) -> [NSMenu] {
+        precondition(ProcessInfo.processInfo.environment["CODEX_QUOTA_BAR_SUPPORT_DIR"] != nil)
+        configureMenu()
+        observeStatusItemAppearance()
+        apply(snapshot: valid)
+        apply(snapshot: failed)
+        precondition(lastRenderedFiveHour == valid.fiveHourLeft)
+        precondition(statusPresentation.statusKind == .stale)
+        statusItem.button?.appearance = NSAppearance(named: .darkAqua)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        precondition(lastRenderedFiveHour == valid.fiveHourLeft)
+        precondition(lastRenderedSevenDay == valid.sevenDayLeft)
+        precondition(lastRenderedAppearanceKey == "darkAqua")
+        retryTimer?.invalidate()
+        retryTimer = nil
+        let range = UsageRangeSnapshot(inputTokens: 10_200_000, cachedInputTokens: 8_600_000,
+                                       outputTokens: 2_200_000, reasoningTokens: 0, totalTokens: 12_400_000)
+        latestUsage = UsageSnapshot(ok: true, updatedAt: valid.updatedAt, error: nil, sourceStatus: nil,
+                                    ranges: Dictionary(uniqueKeysWithValues: ["today", "7d", "30d", "month", "all"].map { ($0, range) }))
+        updateUsageItems()
+        for (index, key) in ["today", "7d", "30d", "month", "all"].enumerated() {
+            periodMenu.performActionForItem(at: index)
+            precondition(selectedUsageRange == key)
+            precondition(AppPreferences.load().usageRange == key)
+            precondition(periodMenu.items.filter { $0.state == .on }.count == 1)
+        }
+        periodMenu.performActionForItem(at: periodMenu.numberOfItems - 1)
+        precondition(selectedUsageRange == "today")
+        periodMenu.performActionForItem(at: 1)
+        precondition(selectedUsageRange == "7d")
+        statusPresentation = .refreshing(keeping: .live)
+        applyStatusPresentation()
+        precondition(!refreshItem.isEnabled)
+        apply(snapshot: valid)
+        precondition(stateItem.isHidden)
+        precondition(refreshItem.isEnabled)
+        precondition(cachedTokenView.accessibilityValue() as? String == "8.6M")
+        NSStatusBar.system.removeStatusItem(statusItem)
+        appearanceObservation?.invalidate()
+        return [menu, usageMenu, settingsMenu, periodMenu]
+    }
+}
+#endif

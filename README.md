@@ -7,7 +7,7 @@ CodexQuotaBar is a small macOS menu bar app for showing local Codex quota at a g
 - 日常开发统一使用 `main`，一个完整的小改动做一次提交，验证后及时推送。
 - 仅在大幅实验时临时开分支；确认采用后合回 `main`。
 - 已发布版本用 `vX.Y.Z` 标签定位；本机候选用带构建号的标签定位，不等于已发布安装包。
-- 当前主线采用已认可的石墨双环 build 7；`v0.4.2-build7` 保存其完整源码回退点。该标签不是正式 Release。
+- 当前主线沿用已认可的石墨双环设计；`v0.4.2-build7` 保存精修前的源码回退点。该标签不是正式 Release。
 - 旧的胶囊、驾驶舱、7d 和 polish 分支保留作历史参考，不再作为日常开发入口；不自动删除。
 
 ## Goal

@@ -60,17 +60,17 @@ class StaticUIContractTests(unittest.TestCase):
         self.assertIn("final class MenuDetailRowView: NSView", SOURCE)
         self.assertIn('button.keyEquivalent = "t"', SOURCE)
         self.assertIn("button.keyEquivalentModifierMask = [.command]", SOURCE)
-        self.assertIn("periodControlView.onCycle", SOURCE)
+        self.assertIn("tokenRangeItem.submenu = periodMenu", SOURCE)
         self.assertIn("menu.minimumWidth = MenuQuotaRowView.menuWidth", SOURCE)
         self.assertIn("usageMenu.minimumWidth = MenuDetailRowView.menuWidth", SOURCE)
         self.assertIn("settingsMenu.minimumWidth = 220", SOURCE)
         self.assertIn("private static let contentInset: CGFloat = 14", SOURCE)
-        self.assertIn("periodLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset)", SOURCE)
+        self.assertIn("periodLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset + 12)", SOURCE)
         self.assertIn("resetLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.contentInset)", SOURCE)
         self.assertIn("NSFont.systemFont(ofSize: 13, weight: .medium)", SOURCE)
         self.assertIn("private static let valueColumnWidth: CGFloat = 44", SOURCE)
         self.assertIn("private static let valueResetGap: CGFloat = 8", SOURCE)
-        self.assertIn("valueLabel.alignment = .left", SOURCE)
+        self.assertIn("valueLabel.alignment = .right", SOURCE)
         self.assertIn("label.lineBreakMode = .byTruncatingTail", SOURCE)
         self.assertIn("usageMenu.update()", SOURCE)
         self.assertNotIn("reopenMenuAfterPeriodChange", SOURCE)
@@ -81,11 +81,11 @@ class StaticUIContractTests(unittest.TestCase):
         self.assertIn('NSMenuItem(title: "Output --", action: nil, keyEquivalent: "")', SOURCE)
         self.assertIn("tokenTotalItem.view = tokenTotalView", SOURCE)
         self.assertIn("fiveHourTrendItem.view = fiveHourTrendView", SOURCE)
-        self.assertIn('"Token: Scanning local records..."', SOURCE)
+        self.assertIn('"Updating local statistics…"', SOURCE)
 
     def test_partial_quota_data_keeps_independent_reset_value(self):
         self.assertIn("let resetText = reset ?? \"--\"", SOURCE)
-        self.assertIn('resetLabel.stringValue = "reset \\(resetText)"', SOURCE)
+        self.assertIn("resetLabel.stringValue = QuotaDisplay.resetLabel(resetText)", SOURCE)
         self.assertIn('shortDateTime(snapshot?.sevenDayReset)', SOURCE)
 
     def test_hover_parser_rejects_error_text_and_bounds_reset_text(self):
@@ -97,8 +97,8 @@ class StaticUIContractTests(unittest.TestCase):
         self.assertIn("private static let resetFont = NSFont.systemFont(ofSize: 11)", SOURCE)
         self.assertIn("private static let valueRect = NSRect(x: 49, y: 0, width: 44, height: 20)", SOURCE)
         self.assertIn("private static let resetRect = NSRect(x: 101, y: 0, width: 137, height: 20)", SOURCE)
-        self.assertIn('draw(row.value, in: Self.valueRect.offsetBy(dx: 0, dy: rowY), font: Self.valueFont, color: Self.color(for: row.percent), alignment: .left)', SOURCE)
-        self.assertIn('draw("reset \\(row.reset)", in: Self.resetRect', SOURCE)
+        self.assertIn('draw(row.value, in: Self.valueRect.offsetBy(dx: 0, dy: rowY), font: Self.valueFont, color: row.percent == nil ? .lightGray : .white, alignment: .right)', SOURCE)
+        self.assertIn('draw(QuotaDisplay.resetLabel(row.reset), in: Self.resetRect', SOURCE)
         self.assertIn("NSGraphicsContext.saveGraphicsState()", SOURCE)
         self.assertIn('NSSize(width: 252, height: 68)', SOURCE)
 
@@ -122,11 +122,11 @@ class StaticUIContractTests(unittest.TestCase):
         self.assertIn('name: "detail-unavailable"', SNAPSHOT_DRIVER)
 
     def test_refresh_feedback_is_stateful_and_sanitized(self):
-        for text in ("Refreshing…", "Retry refresh", "Showing last update", "No quota data", "Settings unavailable"):
+        for text in ("Refreshing…", "Retry refresh", "Last update", "No quota data", "Settings unavailable"):
             self.assertIn(text, SOURCE)
         self.assertIn("struct MenuStatusPresentation: Equatable", SOURCE)
         self.assertIn("static func refreshing(keeping previous: MenuStatusPresentation)", SOURCE)
-        self.assertIn("static func refreshFailure(lastUpdated: String?)", SOURCE)
+        self.assertIn("static func refreshFailure(lastUpdated: String?, hasData: Bool = false)", SOURCE)
         self.assertIn("static let operationFailure", SOURCE)
         self.assertIn('let malformed = MenuStatusPresentation.refreshFailure(lastUpdated: "sk-live-secret-token")', SNAPSHOT_DRIVER)
         self.assertIn("assertMenuStatusPresentation()", SNAPSHOT_DRIVER)
