@@ -806,7 +806,7 @@ struct StatusItemRenderer {
             if index < filled {
                 color.setFill()
             } else {
-                foreground.withAlphaComponent(0.18).setFill()
+                NSColor.systemBlue.withAlphaComponent(0.22).setFill()
             }
             bar.fill()
         }
@@ -835,10 +835,10 @@ struct StatusItemRenderer {
             return NSColor(calibratedRed: 0.55, green: 0.69, blue: 0.79, alpha: 0.55)
         }
         if percent! > 60 {
-            return NSColor(calibratedRed: 0.14, green: 0.51, blue: 0.29, alpha: 1.0)
+            return NSColor(calibratedRed: 0.28, green: 0.78, blue: 0.48, alpha: 1.0)
         }
         if percent! >= 20 {
-            return NSColor(calibratedRed: 0.72, green: 0.42, blue: 0, alpha: 1.0)
+            return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.28, alpha: 1.0)
         }
         return NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.40, alpha: 1.0)
     }
